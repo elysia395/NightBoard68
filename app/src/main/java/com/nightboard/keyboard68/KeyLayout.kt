@@ -10,6 +10,7 @@ package com.nightboard.keyboard68
  * @param modBit     修饰键在报告里的位掩码
  * @param fnLabel    Fn 层副标签，null 表示该键没有 Fn 层
  * @param fnCode     Fn 层按下的键码
+ * @param autoMods   发送该键时自动携带的修饰键（如 ( = Shift+9），0 = 无
  */
 class Key(
     val label: String,
@@ -19,6 +20,7 @@ class Key(
     val modBit: Int = 0,
     val fnLabel: String? = null,
     val fnCode: Int = code,
+    val autoMods: Int = 0,
 ) {
     /** 修饰键文本标签（Win 用 ⌘ 风格会误导，直接写 Win） */
     val displayLabel: String get() = label
