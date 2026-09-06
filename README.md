@@ -1,12 +1,18 @@
 # NightBoard68
 
+<p>
+  简体中文 · <a href="README_EN.md">English</a>
+</p>
+
 把 Android 手机横过来，变成一台 **68 键 65% 配列的蓝牙键盘（+ 触控板）**。
 电脑把手机识别成一台真正的蓝牙 HID 设备，**电脑端无需安装任何软件**。
 
-> English: NightBoard68 turns your Android phone into a 68-key (65% layout)
-> Bluetooth HID keyboard + touchpad for your PC. No companion software needed
-> on the computer — the phone shows up as a real Bluetooth keyboard.
-> Requires Android 9+. See [usage](#使用) below. (README is mainly in Chinese.)
+<table>
+  <tr>
+    <td width="42%"><img src="assets/cover.png" alt="NightBoard68 宣传封面：把安卓手机变成静音键盘" /></td>
+    <td width="58%"><img src="assets/intro.png" alt="NightBoard68 功能介绍：键盘+触控板，深夜宿舍/图书馆/客厅电视" /></td>
+  </tr>
+</table>
 
 ## 为什么做这个（开发缘由）
 
