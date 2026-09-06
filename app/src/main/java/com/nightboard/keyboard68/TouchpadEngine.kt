@@ -47,6 +47,8 @@ class TouchpadEngine(
     private var lastTapY = 0f
     private var clickUpRun: Runnable? = null    // 轻点/右键 click 的 45ms 延迟抬起
     private var dragPointer = -1                // 拖动选择中的手指
+    private var activeButton = 0                // 拖动进行中 = 1：位移/滚轮报告必须携带按住的左键，
+                                                // 否则 Agent 的边沿检测会把按下态当成"抬起"
 
     // ---- 位移 / 滚轮累积 ----
     private var pendingDx = 0f
@@ -83,6 +85,9 @@ class TouchpadEngine(
             pendingDx = 0f; pendingDy = 0f; pendingWheel = 0f
             pinchLocked = false; pinchAccum = 0f; pinchDy = 0f
             wheelVel = 0f
+            // ★必须清空：Android 指针 id 循环复用（恒为 0/1），双指手势留下的 inert
+            // 屏蔽会命中下一次单指手势的同 id 指针，表现为光标卡死无法移动
+            inert.clear()
             cancelLongPress()
             if (pid !in inScroll) {
                 // 双击后按住 = 拖动选择：立即左键按下
@@ -93,6 +98,7 @@ class TouchpadEngine(
                     clickUpRun?.let { view.removeCallbacks(it) }
                     clickUpRun = null
                     dragPointer = pid
+                    activeButton = 1
                     hub.sendMouse(0, 0, 0, 1)
                     feedback?.invoke()
                     return
@@ -151,9 +157,10 @@ class TouchpadEngine(
                 val dd = d - lastPairDist
                 lastPairDist = d
                 pinchAccum += Math.abs(dd)
-                // 捏合意图：间距变化有绝对量且显著大于平移分量才锁定，防止斜向滚动误判
+                // 捏合意图：间距变化有绝对量、且显著大于「带符号的」平均平移分量，
+                // 防止斜向滚动误判；绝对值下限滤掉手指抖动
                 if (!pinchLocked &&
-                    pinchAccum > Math.max(dpx(10f), 2f * pinchDy) &&
+                    pinchAccum > Math.max(dpx(10f), 2f * Math.abs(pinchDy)) &&
                     pinchAccum > dpx(14f)
                 ) {
                     pinchLocked = true
@@ -163,7 +170,9 @@ class TouchpadEngine(
                     pendingWheel += dd          // 间距拉大 = 滚轮向上 = 放大
                 } else {
                     pendingWheel += dy / 2f
-                    pinchDy += Math.abs(dy) / 2f
+                    // 带符号的平均位移：捏合时两指反向移动相互抵消（判据才放行），
+                    // 同向滚动则累加，用绝对值会在竖向捏合时永远锁不上缩放意图
+                    pinchDy += dy / 2f
                     trackWheelVel(dy / 2f)
                 }
             }
@@ -177,9 +186,11 @@ class TouchpadEngine(
     }
 
     fun onPointerUp(pid: Int) {
+        val upPos = pointers[pid]
         if (pid == dragPointer) {
             pointers.remove(pid)
             dragPointer = -1
+            activeButton = 0
             cancelLongPress()
             hub.sendMouse(0, 0, 0, 0)           // 左键抬起，选择结束
             flush(force = true)
@@ -197,6 +208,9 @@ class TouchpadEngine(
             if (clickFired) {
                 hub.sendMouse(0, 0, 0, 1)
                 scheduleClickUp()
+                // ★记录本次轻点：「双击后按住 = 拖动选择」靠它判定（漏记则拖动永远不触发）
+                upPos?.let { lastTapX = it.first; lastTapY = it.second }
+                lastTapUpAt = now()
             } else {
                 startMomentumIfFlick()
             }
@@ -204,6 +218,7 @@ class TouchpadEngine(
                 hub.modUp(Mods.LCTRL)
                 pinchLocked = false
             }
+            inert.clear()
             maxPointers = 1
             longPressFired = false
         } else if (pointers.size == 1) {
@@ -231,6 +246,7 @@ class TouchpadEngine(
             pinchLocked = false
         }
         dragPointer = -1
+        activeButton = 0
         pointers.clear()
         inScroll.clear()
         inert.clear()
@@ -249,12 +265,14 @@ class TouchpadEngine(
         lastFlush = t
 
         // 位移：只发整数部分，亚像素残留继续累积（慢速拖动不丢步）
+        // 按钮位携带 activeButton：拖动选择进行中，移动事件必须保持左键按下，
+        // 否则蓝牙的绝对电平/Agent 的边沿检测都会把按下态当成"抬起"
         val sx = pendingDx.toInt()
         val sy = pendingDy.toInt()
         if (sx != 0 || sy != 0) {
             pendingDx -= sx
             pendingDy -= sy
-            hub.sendMouse(sx, sy, 0, 0)
+            hub.sendMouse(sx, sy, 0, activeButton)
         }
         // 滚轮：与位移独立冲销（★不可 else-if，否则残留饿死滚轮）
         pendingWheel = if (force) {
@@ -277,7 +295,7 @@ class TouchpadEngine(
             val raw = if (roundUp) Math.round(-w / notch) else (-w / notch).toInt()
             if (raw == 0) break
             val c = raw.coerceIn(-6, 6)
-            hub.sendMouse(0, 0, c, 0)
+            hub.sendMouse(0, 0, c, activeButton)
             w += c * notch
             if (Math.abs(raw) < 6) break        // 剩余不足一批，下轮继续
         }
