@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 简化的 65% 键盘图形：外壳 + 三排键帽 + 右下方向键 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#1C232D"
+        android:pathData="M24,36 h60 a4,4 0 0 1 4,4 v28 a4,4 0 0 1 -4,4 h-60 a4,4 0 0 1 -4,-4 v-28 a4,4 0 0 1 4,-4 z" />
+    <path android:fillColor="#E6EAF0" android:pathData="M28,42 h6 v5 h-6 z M37,42 h6 v5 h-6 z M46,42 h6 v5 h-6 z M55,42 h6 v5 h-6 z M64,42 h6 v5 h-6 z M73,42 h6 v5 h-6 z" />
+    <path android:fillColor="#E8944A" android:pathData="M28,51 h10 v5 h-10 z M41,51 h6 v5 h-6 z M50,51 h6 v5 h-6 z M59,51 h6 v5 h-6 z M68,51 h13 v5 h-13 z" />
+    <path android:fillColor="#E6EAF0" android:pathData="M28,60 h16 v6 h-16 z M47,60 h20 v6 h-20 z" />
+    <path android:fillColor="#E8944A" android:pathData="M70,60 h5 v6 h-5 z M77,60 h5 v6 h-5 z" />
+</vector>
