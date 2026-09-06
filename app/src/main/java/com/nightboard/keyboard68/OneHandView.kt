@@ -41,7 +41,12 @@ import android.widget.TextView
  */
 class OneHandView(context: Context, private val hub: InputHub) : View(context) {
 
-    private class Cap(val key: Key?, val rect: RectF, val customSlot: Int = -1) {
+    private class Cap(
+        val key: Key?,
+        val rect: RectF,
+        val customSlot: Int = -1,
+        val modRowSlot: Int = -1,   // 修饰键排（Ctrl/Alt/Tab/Win/Esc）槽位，长按可换位
+    ) {
         fun contains(x: Float, y: Float) = rect.contains(x, y)
     }
 
@@ -84,21 +89,16 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     private var pendingChordBits = 0
     private var pendingChordAction: Runnable? = null
 
-    // 触控板（只统计落在触摸板区域的手指）
+    // 触控板（只统计落在触摸板区域的手指；手势逻辑在 TouchpadEngine，与横屏共用）
     private val pointerInPad = HashSet<Int>()
-    private val tpPos = HashMap<Int, Pair<Float, Float>>()
-    private var tpDownAt = 0L
-    private var tpMoveDist = 0f
-    private var tpMaxPointers = 1
-    private var tpPendingDx = 0f
-    private var tpPendingDy = 0f
-    private var tpPendingWheel = 0f
-    private var tpLastFlush = 0L
-    // 单指长按 = 右键
-    private var tpLongPressRun: Runnable? = null
-    private var tpLongPressFired = false
-    // 右缘滚动条：落在条内的手指上下滑 = 滚动（双指滑动的单指平替）
-    private val pointerInScroll = HashSet<Int>()
+    private val tp = TouchpadEngine(this, hub, prefs).apply {
+        feedback = { haptic() }
+    }
+
+    // 修饰键排（Ctrl/Alt/Tab/Win/Esc）长按换位
+    private val modRowLongRun = HashMap<Int, Runnable>()
+    private val modRowLongFired = HashSet<Int>()
+    private val modRowDeferredChord = HashMap<Int, Int>()   // 延迟发送的 Tab/Esc 携带的组合键
 
     // 颜色（与横屏键盘一致）
     private val colorBg = Color.parseColor("#0E1116")
@@ -156,21 +156,14 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
 
         val list = ArrayList<Cap>(64)
 
-        // 固定修饰键行（Shift 按手机习惯放 Z 行行首）
+        // 固定修饰键行（Shift 按手机习惯放 Z 行行首）；五个键的左右顺序可自定义
         val modW = (w - pad * 2 - gap * 4) / 5f
         // 自定义快捷键槽行是 6 槽，宽度单独算（混用会挤出屏幕）
         val customW = (w - pad * 2 - gap * 5) / 6f
-        val modKeys = listOf(
-            Key("Ctrl", 0, isModifier = true, modBit = Mods.LCTRL),
-            Key("Alt", 0, isModifier = true, modBit = Mods.LALT),
-            Key("Tab", Hid.TAB),
-            Key("Win", 0, isModifier = true, modBit = Mods.LGUI),
-            Key("Esc", Hid.ESC),
-        )
         run {
             var x = pad
-            for (k in modKeys) {
-                list.add(Cap(k, RectF(x, modsTop, x + modW, modsTop + modH)))
+            modRowOrder().forEachIndexed { slot, token ->
+                list.add(Cap(keyForToken(token), RectF(x, modsTop, x + modW, modsTop + modH), modRowSlot = slot))
                 x += modW + gap
             }
         }
@@ -428,7 +421,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         )
         paintText.color = Color.parseColor("#5A6474")
         canvas.drawText(
-            "长按橙色描边的自定义键可编辑快捷键",
+            "长按自定义键可编辑快捷键 · 长按 Ctrl/Alt/Tab/Win/Esc 可互换位置",
             padRect.centerX(),
             padRect.bottom - dp(10f),
             paintText,
@@ -457,8 +450,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                     }
                     padRect.contains(x, y) -> {
                         pointerInPad.add(pid)
-                        if (x >= padRect.right - dp(34f)) pointerInScroll.add(pid)
-                        tpDown(pid, x, y)
+                        tp.onPointerDown(pid, x, y, inScrollStrip = x >= padRect.right - dp(34f))
                     }
                     else -> press(pid, x, y)
                 }
@@ -467,7 +459,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 for (p in 0 until e.pointerCount) {
                     val pid = e.getPointerId(p)
                     if (pid in pointerInPad) {
-                        tpMove(pid, e.getX(p), e.getY(p))
+                        tp.onPointerMove(pid, e.getX(p), e.getY(p))
                     }
                     // 键盘区手指不支持滑动换键：按下即绑定，抬起时结算
                 }
@@ -477,7 +469,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 when {
                     pid in pointerInPad -> {
                         pointerInPad.remove(pid)
-                        tpUp(pid)
+                        tp.onPointerUp(pid)
                     }
                     else -> release(pid)
                 }
@@ -544,6 +536,14 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             return
         }
 
+        // 修饰键排：无锁存/无组合/无大写锁定时，长按 550ms 打开换位对话框
+        // （有锁存时按下会立即产生锁存/组合动作，长按与其冲突，故不启用）
+        if (c.modRowSlot >= 0 && latchedMods.isEmpty() && pendingChordBits == 0 && lockedBits == 0) {
+            val run = Runnable { fireModRowLongPress(pid, c) }
+            modRowLongRun[pid] = run
+            postDelayed(run, MOD_ROW_LONG_PRESS_MS)
+        }
+
         val k = c.key!!
         when {
             k.isModifier && (modHold || k.modBit == Mods.LGUI) -> {
@@ -590,8 +590,14 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 val chordBits = pendingChordBits
                 cancelPendingChord(clearBits = false)
                 pendingChordBits = 0
-                pointerSent[pid] = k.code
-                hub.keyDown(k.code, latchedBits() or chordBits or k.autoMods)
+                if (c.modRowSlot >= 0 && (k.code == Hid.TAB || k.code == Hid.ESC)) {
+                    // 修饰键排的 Tab/Esc：延迟到抬起发送，给长按换位留判定窗口
+                    // （否则按住 Tab 450ms 后电脑端自动连发已经发生，长按期间污染输入）
+                    modRowDeferredChord[pid] = chordBits
+                } else {
+                    pointerSent[pid] = k.code
+                    hub.keyDown(k.code, latchedBits() or chordBits or k.autoMods)
+                }
             }
         }
         invalidate()
@@ -599,6 +605,9 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
 
     private fun release(pid: Int) {
         val c = pointerCaps.remove(pid) ?: return
+        // 修饰键排：取消未触发的长按；已触发（对话框已开）则本次抬起不再发键
+        modRowLongRun.remove(pid)?.let { removeCallbacks(it) }
+        val modRowLongPressDidFire = modRowLongFired.remove(pid)
         if (c.customSlot >= 0) {
             customPendingRun.remove(pid)?.let { removeCallbacks(it) }
             val slot = pointerCustom.remove(pid)
@@ -620,8 +629,18 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             }
             // 普通键释放 = 消费锁存
             else -> {
-                pointerSent.remove(pid)?.let { hub.keyUp(it) }
-                latchedMods.clear()
+                if (modRowLongPressDidFire) {
+                    // 长按换位对话框已打开：这次按压不发键
+                } else if (c.modRowSlot >= 0 && (k.code == Hid.TAB || k.code == Hid.ESC)) {
+                    // 延迟发送的 Tab/Esc：按下+抬起一次性发出（携带锁存的组合键）
+                    val chord = modRowDeferredChord.remove(pid) ?: 0
+                    hub.keyDown(k.code, latchedBits() or chord)
+                    hub.keyUp(k.code)
+                    latchedMods.clear()
+                } else {
+                    pointerSent.remove(pid)?.let { hub.keyUp(it) }
+                    latchedMods.clear()
+                }
             }
         }
         invalidate()
@@ -670,100 +689,80 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         latchedMods.clear()
         lockedBits = 0
         hub.releaseAll()
-        // 触控板残余状态
+        // 触摸板残余状态清空；拖动/点击中的鼠标键一并抬起
         pointerInPad.clear()
-        pointerInScroll.clear()
-        tpPos.clear()
-        tpPendingDx = 0f; tpPendingDy = 0f; tpPendingWheel = 0f
-        tpLongPressRun?.let { removeCallbacks(it) }
-        tpLongPressRun = null
-        tpLongPressFired = false
+        tp.cancelAll(sendMouseUp = true)
         invalidate()
     }
 
-    // ---------- 触控板 ----------
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        // View 分离后 postDelayed 的任务不再有意义，惯性/拖动全部终止
+        tp.cancelAll(sendMouseUp = true)
+    }
 
-    private fun tpDown(pid: Int, x: Float, y: Float) {
-        tpPos[pid] = x to y
-        if (tpPos.size > tpMaxPointers) tpMaxPointers = tpPos.size
-        if (tpPos.size == 1) {
-            tpDownAt = SystemClock.uptimeMillis()
-            tpMoveDist = 0f
-            tpLongPressFired = false
-            // 单指按住 500ms 不动 = 右键（滚动条手指/第二根手指落下/移动则取消）
-            tpLongPressRun?.let { removeCallbacks(it) }
-            if (pid !in pointerInScroll) {
-                val run = Runnable {
-                    tpLongPressRun = null
-                    if (tpPos.size == 1 && tpMoveDist < 14f && !tpLongPressFired && pointerInScroll.isEmpty()) {
-                        tpLongPressFired = true
-                        haptic()
-                        hub.sendMouse(0, 0, 0, 2)
-                        postDelayed({ hub.sendMouse(0, 0, 0, 0) }, 45)
-                    }
+    // ---------- 修饰键排顺序自定义（Ctrl/Alt/Tab/Win/Esc） ----------
+
+    private fun modRowDefaults(): List<String> = listOf("ctrl", "alt", "tab", "win", "esc")
+
+    private fun modRowOrder(): List<String> {
+        val raw = prefs.getString("mod_row_order", null)
+            ?.split(',')?.map { it.trim()?.lowercase() ?: "" }
+        return if (raw != null && raw.size == 5 && raw.toSet() == modRowDefaults().toSet()) {
+            raw
+        } else {
+            modRowDefaults()
+        }
+    }
+
+    private fun saveModRowOrder(order: List<String>) {
+        prefs.edit().putString("mod_row_order", order.joinToString(",")).apply()
+    }
+
+    private fun keyForToken(token: String): Key = when (token) {
+        "alt" -> Key("Alt", 0, isModifier = true, modBit = Mods.LALT)
+        "tab" -> Key("Tab", Hid.TAB)
+        "win" -> Key("Win", 0, isModifier = true, modBit = Mods.LGUI)
+        "esc" -> Key("Esc", Hid.ESC)
+        else -> Key("Ctrl", 0, isModifier = true, modBit = Mods.LCTRL)
+    }
+
+    /** 长按修饰键排 550ms：回滚按下瞬间的效果，打开换位对话框 */
+    private fun fireModRowLongPress(pid: Int, c: Cap) {
+        modRowLongRun.remove(pid)
+        modRowLongFired.add(pid)
+        val k = c.key!!
+        if (k.isModifier && k.modBit != Mods.LGUI && k in latchedMods) {
+            latchedMods.remove(k)               // 回滚 Ctrl/Alt 在按下瞬间的锁存
+        }
+        cancelPendingChord(clearBits = true)
+        // 回滚 Win 的按住（release 时 pointerHeldMods 已空，自动去重）
+        pointerHeldMods.remove(pid)?.let { hub.modUp(it) }
+        haptic()
+        openModRowSwapDialog(c.modRowSlot)
+        invalidate()
+    }
+
+    private fun openModRowSwapDialog(slot: Int) {
+        val act = context as? Activity ?: return
+        val labels = mapOf("ctrl" to "Ctrl", "alt" to "Alt", "tab" to "Tab", "win" to "Win", "esc" to "Esc")
+        val order = modRowOrder()
+        val current = order.getOrNull(slot) ?: return
+        AlertDialog.Builder(act)
+            .setTitle("把此位置换成（与所选键互换）")
+            .setItems(order.map { labels[it] ?: it }.toTypedArray()) { _, which ->
+                val pick = order.getOrNull(which)
+                if (pick != null && pick != current) {
+                    val next = order.toMutableList()
+                    next[which] = current
+                    next[slot] = pick
+                    saveModRowOrder(next)
+                    computeLayout()
+                    haptic()
                 }
-                tpLongPressRun = run
-                postDelayed(run, TP_LONG_PRESS_MS)
+                invalidate()
             }
-        }
-    }
-
-    private fun tpMove(pid: Int, x: Float, y: Float) {
-        val old = tpPos[pid] ?: return
-        val dx = x - old.first
-        val dy = y - old.second
-        tpPos[pid] = x to y
-        when {
-            tpPos.size >= 2 -> tpPendingWheel += dy / 2f
-            pid in pointerInScroll -> tpPendingWheel += dy   // 右缘条：整幅位移算滚动
-            else -> {
-                tpPendingDx += dx
-                tpPendingDy += dy
-                tpMoveDist += Math.abs(dx) + Math.abs(dy)
-            }
-        }
-        flushTouchpad(force = false)
-    }
-
-    private fun tpUp(pid: Int) {
-        tpPos.remove(pid)
-        pointerInScroll.remove(pid)
-        if (tpPos.isEmpty()) {
-            flushTouchpad(force = true)
-            tpLongPressRun?.let { removeCallbacks(it); tpLongPressRun = null }
-            val dur = SystemClock.uptimeMillis() - tpDownAt
-            if (!tpLongPressFired && tpMaxPointers == 1 && tpMoveDist < 14f && dur < 220f) {
-                // 轻点 = 左键（长按已发右键；双指轻点不再触发右键）
-                hub.sendMouse(0, 0, 0, 1)
-                postDelayed({ hub.sendMouse(0, 0, 0, 0) }, 45)
-            }
-            tpLongPressFired = false
-            tpMaxPointers = 1
-        }
-    }
-
-    private fun flushTouchpad(force: Boolean) {
-        val now = SystemClock.uptimeMillis()
-        if (!force && now - tpLastFlush < 12) return
-        tpLastFlush = now
-        if (tpPendingDx != 0f || tpPendingDy != 0f) {
-            // 只发送整数部分，小数余量留到下次累计——慢速拖动不再丢步
-            val sx = tpPendingDx.toInt()
-            val sy = tpPendingDy.toInt()
-            if (sx != 0 || sy != 0) {
-                tpPendingDx -= sx
-                tpPendingDy -= sy
-                hub.sendMouse(sx, sy, 0, 0)
-            }
-        } else if (tpPendingWheel != 0f) {
-            // 滚动：一格 = 设置里的像素数（默认 24，可在设置页调灵敏度）
-            val notch = prefs.getInt("scroll_notch_px", 24).coerceIn(8, 80).toFloat()
-            val wv = (-tpPendingWheel / notch).toInt()
-            if (wv != 0) {
-                tpPendingWheel += wv * notch
-                hub.sendMouse(0, 0, wv.coerceIn(-6, 6), 0)
-            }
-        }
+            .show()
     }
 
     // ---------- 自定义快捷键编辑器 ----------
@@ -905,7 +904,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     companion object {
         private const val CHORD_DELAY_MS = 300L
         private const val DOUBLE_TAP_LOCK_MS = 280L
-        private const val TP_LONG_PRESS_MS = 500L
+        private const val MOD_ROW_LONG_PRESS_MS = 550L
         private const val HIT_SLOP_DP = 3f
         private const val BTN_LAND = 1
         private const val BTN_CHECK = 2

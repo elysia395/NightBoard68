@@ -46,6 +46,11 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     private val hapticAmp = prefs.getInt("haptic_amp", 140)
     private val modHold = prefs.getBoolean("mod_hold", false)
 
+    /** 触摸板手势引擎（与竖屏 OneHandView 共用同一实现） */
+    private val tp = TouchpadEngine(this, hub, prefs).apply {
+        feedback = { haptic() }
+    }
+
     private var rects: List<KeyRect> = emptyList()
     private var stripButtons: List<StripBtn> = emptyList()
     private var unitW = 0f
@@ -71,19 +76,6 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     // 触控板模式
     private var touchMode = false
-    private val tpPos = HashMap<Int, Pair<Float, Float>>()
-    private var tpDownAt = 0L
-    private var tpMoveDist = 0f
-    private var tpMaxPointers = 1
-    private var tpPendingDx = 0f
-    private var tpPendingDy = 0f
-    private var tpPendingWheel = 0f
-    private var tpLastFlush = 0L
-    // 单指长按 = 右键
-    private var tpLongPressRun: Runnable? = null
-    private var tpLongPressFired = false
-    // 右缘滚动条：落在条内的手指上下滑 = 滚动（双指滑动的单指平替）
-    private val pointerInScroll = HashSet<Int>()
 
     // 颜色
     private val colorBg = Color.parseColor("#0E1116")
@@ -498,115 +490,40 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         lockedBits = 0
         fnLatched = false
         hub.releaseAll()
-        // 触控板残余状态
-        tpPos.clear()
-        tpPendingDx = 0f; tpPendingDy = 0f; tpPendingWheel = 0f
-        tpLongPressRun?.let { removeCallbacks(it) }
-        tpLongPressRun = null
-        tpLongPressFired = false
-        pointerInScroll.clear()
+        // 触摸板残余状态清空；拖动/点击中的鼠标键一并抬起
+        tp.cancelAll(sendMouseUp = true)
         invalidate()
     }
 
-    // ---------- 触控板 ----------
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        // View 分离后 postDelayed 的任务不再有意义，惯性/拖动全部终止
+        tp.cancelAll(sendMouseUp = true)
+    }
+
+    // ---------- 触控板（手势全部委托给 TouchpadEngine） ----------
 
     private fun handleTouchpad(e: MotionEvent) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = e.actionIndex
-                val x = e.getX(i)
-                val y = e.getY(i)
-                val pid = e.getPointerId(i)
-                tpPos[pid] = x to y
-                if (x >= width - pad - dp(34f)) pointerInScroll.add(pid)
-                if (tpPos.size > tpMaxPointers) tpMaxPointers = tpPos.size
-                if (tpPos.size == 1) {
-                    tpDownAt = SystemClock.uptimeMillis()
-                    tpMoveDist = 0f
-                    tpLongPressFired = false
-                    // 单指按住 500ms 不动 = 右键（滚动条手指/第二根手指落下/移动则取消）
-                    tpLongPressRun?.let { removeCallbacks(it) }
-                    if (pid !in pointerInScroll) {
-                        val run = Runnable {
-                            tpLongPressRun = null
-                            if (tpPos.size == 1 && tpMoveDist < 14f && !tpLongPressFired && pointerInScroll.isEmpty()) {
-                                tpLongPressFired = true
-                                haptic()
-                                hub.sendMouse(0, 0, 0, 2)
-                                postDelayed({ hub.sendMouse(0, 0, 0, 0) }, 45)
-                            }
-                        }
-                        tpLongPressRun = run
-                        postDelayed(run, TP_LONG_PRESS_MS)
-                    }
-                }
+                tp.onPointerDown(
+                    e.getPointerId(i),
+                    e.getX(i),
+                    e.getY(i),
+                    inScrollStrip = e.getX(i) >= width - pad - dp(34f),
+                )
             }
             MotionEvent.ACTION_MOVE -> {
                 for (i in 0 until e.pointerCount) {
-                    val pid = e.getPointerId(i)
-                    val old = tpPos[pid] ?: continue
-                    val dx = e.getX(i) - old.first
-                    val dy = e.getY(i) - old.second
-                    tpPos[pid] = e.getX(i) to e.getY(i)
-                    when {
-                        tpPos.size >= 2 -> tpPendingWheel += dy / 2f
-                        pid in pointerInScroll -> tpPendingWheel += dy   // 右缘条：整幅位移算滚动
-                        else -> {
-                            tpPendingDx += dx
-                            tpPendingDy += dy
-                            tpMoveDist += Math.abs(dx) + Math.abs(dy)
-                        }
-                    }
+                    tp.onPointerMove(e.getPointerId(i), e.getX(i), e.getY(i))
                 }
-                flushTouchpad(force = false)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                val pid = e.getPointerId(e.actionIndex)
-                tpPos.remove(pid)
-                pointerInScroll.remove(pid)
-                if (tpPos.isEmpty()) {
-                    flushTouchpad(force = true)
-                    tpLongPressRun?.let { removeCallbacks(it); tpLongPressRun = null }
-                    val dur = SystemClock.uptimeMillis() - tpDownAt
-                    if (!tpLongPressFired && tpMaxPointers == 1 && tpMoveDist < 14f && dur < 220f) {
-                        // 轻点 = 左键（长按已发右键；双指轻点不再触发右键）
-                        hub.sendMouse(0, 0, 0, 1)
-                        postDelayed({ hub.sendMouse(0, 0, 0, 0) }, 45)
-                    }
-                    tpLongPressFired = false
-                    tpMaxPointers = 1
-                }
+                tp.onPointerUp(e.getPointerId(e.actionIndex))
             }
             MotionEvent.ACTION_CANCEL -> {
-                tpPos.clear()
-                tpMaxPointers = 1
-                flushTouchpad(force = true)
-            }
-        }
-    }
-
-    private fun wasTwoFingerTap(): Boolean = tpMaxPointers >= 2
-
-    private fun flushTouchpad(force: Boolean) {
-        val now = SystemClock.uptimeMillis()
-        if (!force && now - tpLastFlush < 12) return
-        tpLastFlush = now
-        if (tpPendingDx != 0f || tpPendingDy != 0f) {
-            // 只发送整数部分，小数余量留到下次累计——慢速拖动不再丢步
-            val sx = tpPendingDx.toInt()
-            val sy = tpPendingDy.toInt()
-            if (sx != 0 || sy != 0) {
-                tpPendingDx -= sx
-                tpPendingDy -= sy
-                hub.sendMouse(sx, sy, 0, 0)
-            }
-        } else if (tpPendingWheel != 0f) {
-            // 滚动：一格 = 设置里的像素数（默认 24，可在设置页调灵敏度）
-            val notch = prefs.getInt("scroll_notch_px", 24).coerceIn(8, 80).toFloat()
-            val wv = (-tpPendingWheel / notch).toInt()
-            if (wv != 0) {
-                tpPendingWheel += wv * notch
-                hub.sendMouse(0, 0, wv.coerceIn(-6, 6), 0)
+                tp.cancelAll(sendMouseUp = true)
             }
         }
     }
@@ -637,7 +554,6 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     companion object {
         private const val CHORD_DELAY_MS = 300L
         private const val DOUBLE_TAP_LOCK_MS = 280L
-        private const val TP_LONG_PRESS_MS = 500L
         private const val HIT_SLOP_DP = 3f   // 死区就近归属半径（间隙 4dp 时 3dp 恰好完全覆盖）
         private const val BTN_SHIFT = 1
         private const val BTN_IME = 2

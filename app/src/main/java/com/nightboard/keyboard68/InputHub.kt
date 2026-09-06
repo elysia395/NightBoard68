@@ -134,6 +134,12 @@ class InputHub(
             hid.releaseAll()
         } catch (_: Exception) {
         }
+        // 补发鼠标全键抬起：拖动/点击进行中退后台或断连时，防止电脑端鼠标键卡住
+        // （蓝牙鼠标报告按钮是绝对电平、Agent 端是边沿检测，发 0 都等价于"全部抬起"）
+        try {
+            sendMouse(0, 0, 0, 0)
+        } catch (_: Exception) {
+        }
     }
 
     fun sendMouse(dx: Int, dy: Int, wheel: Int, buttons: Int) {

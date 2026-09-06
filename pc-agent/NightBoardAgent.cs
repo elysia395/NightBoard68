@@ -128,6 +128,9 @@ class NightBoardAgent
         var remote = "";
         try { remote = ((IPEndPoint)client.Client.RemoteEndPoint).Address.ToString(); } catch { }
         Log("手机已连接: " + remote);
+        // 新连接的边沿检测基线归零：上一台手机异常断线时若按钮为按下态，
+        // 不复位会导致新连接的第一条 b:1 被判"无变化"，表现为重连后轻点失灵
+        prevButtons = 0;
         SendToPhone("{\"t\":\"led\",\"c\":" + LedMask() + "}");
 
         var buffer = new StringBuilder();
@@ -377,6 +380,9 @@ class NightBoardAgent
             KeyDef d;
             if (KeyMap.TryGetValue(hid, out d)) SendKey(d, true);
         }
+        // 补发鼠标按键抬起：拖动/点击进行中手机断线时，防止电脑端左/右键卡住
+        // （HandleMouse 按边沿检测注入抬起并把 prevButtons 归零）
+        HandleMouse(0, 0, 0, 0);
     }
 
     // ---------- 鼠标注入 ----------
