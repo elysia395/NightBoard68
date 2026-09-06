@@ -58,8 +58,10 @@ class TouchpadEngine(
 
     // ---- 双指滚动 vs 捏合缩放 ----
     private var pinchLocked = false
-    private var pinchAccum = 0f                 // |Δ指间距| 累计
-    private var pinchDy = 0f                    // 平均纵向位移累计（比值判据用）
+    private var scrollLocked = false            // 同向滚动已明确：本手势不再判定捏合
+    private var pinchSignal = 0f                // 带符号的指间距变化累计：滚动抖动正负抵消，
+                                                // 真捏合线性增长——比绝对值累计抗误触
+    private var pinchDy = 0f                    // 带符号的平均平移累计
     private var lastPairDist = 0f
 
     // ---- 甩动速度 / 惯性 ----
@@ -83,7 +85,7 @@ class TouchpadEngine(
             moveDist = 0f
             longPressFired = false
             pendingDx = 0f; pendingDy = 0f; pendingWheel = 0f
-            pinchLocked = false; pinchAccum = 0f; pinchDy = 0f
+            pinchLocked = false; scrollLocked = false; pinchSignal = 0f; pinchDy = 0f
             wheelVel = 0f
             // ★必须清空：Android 指针 id 循环复用（恒为 0/1），双指手势留下的 inert
             // 屏蔽会命中下一次单指手势的同 id 指针，表现为光标卡死无法移动
@@ -119,7 +121,7 @@ class TouchpadEngine(
             }
         } else if (pointers.size == 2) {
             // 第二根手指落下：建立捏合判定基线
-            pinchLocked = false; pinchAccum = 0f; pinchDy = 0f
+            pinchLocked = false; scrollLocked = false; pinchSignal = 0f; pinchDy = 0f
             lastPairDist = pairDist()
         }
     }
@@ -156,23 +158,23 @@ class TouchpadEngine(
                 val d = pairDist()
                 val dd = d - lastPairDist
                 lastPairDist = d
-                pinchAccum += Math.abs(dd)
-                // 捏合意图：间距变化有绝对量、且显著大于「带符号的」平均平移分量，
-                // 防止斜向滚动误判；绝对值下限滤掉手指抖动
-                if (!pinchLocked &&
-                    pinchAccum > Math.max(dpx(10f), 2f * Math.abs(pinchDy)) &&
-                    pinchAccum > dpx(14f)
-                ) {
-                    pinchLocked = true
-                    hub.modDown(Mods.LCTRL)     // 缩放 = Ctrl+滚轮
+                // 意图竞争：带符号的间距信号 vs 带符号的平移量，谁先过阈值锁谁，
+                // 赢家通吃本手势——双指滚动时的间距抖动正负抵消，不会再误触发缩放
+                if (!pinchLocked && !scrollLocked) {
+                    pinchSignal += dd
+                    if (Math.abs(pinchSignal) > Math.max(dpx(16f), 1.5f * Math.abs(pinchDy))) {
+                        pinchLocked = true
+                        hub.modDown(Mods.LCTRL)     // 缩放 = Ctrl+滚轮
+                    } else if (Math.abs(pinchDy) > dpx(16f)) {
+                        scrollLocked = true
+                    }
                 }
                 if (pinchLocked) {
                     pendingWheel -= dd          // 张开 = 滚轮向上 = 放大（对齐 Windows 触控板惯例）
                 } else {
                     // 双指滚动灵敏度取滚动条的一半：两指齐扫天然位移大，再叠惯性会明显过冲
                     pendingWheel += dy / 4f
-                    // 带符号的平均位移：捏合时两指反向移动相互抵消（判据才放行），
-                    // 同向滚动则累加，用绝对值会在竖向捏合时永远锁不上缩放意图
+                    // 带符号的平均位移：捏合时两指反向移动相互抵消
                     pinchDy += dy / 2f
                     trackWheelVel(dy / 4f)
                 }
@@ -246,6 +248,8 @@ class TouchpadEngine(
             hub.modUp(Mods.LCTRL)
             pinchLocked = false
         }
+        scrollLocked = false
+        pinchSignal = 0f
         dragPointer = -1
         activeButton = 0
         pointers.clear()
