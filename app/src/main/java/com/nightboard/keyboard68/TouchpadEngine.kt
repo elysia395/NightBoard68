@@ -266,7 +266,10 @@ class TouchpadEngine(
 
     private fun flush(force: Boolean) {
         val t = now()
-        if (!force && t - lastFlush < FLUSH_MS) return
+        if (!force && t - lastFlush < FLUSH_MS) {
+            // 高速拖动跳过节流：位移攒够 3px 立即发送，慢速保持防抖合并
+            if (Math.abs(pendingDx) + Math.abs(pendingDy) < FAST_MOVE_PX) return
+        }
         lastFlush = t
 
         // 位移：只发整数部分，亚像素残留继续累积（慢速拖动不丢步）
@@ -387,6 +390,7 @@ class TouchpadEngine(
         private const val LONG_PRESS_MS = 500L
         private const val CLICK_UP_MS = 45L
         private const val FLUSH_MS = 12L
+        private const val FAST_MOVE_PX = 3f
         private const val MOMENTUM_STEP_MS = 16L
         private const val MOMENTUM_TOTAL_FACTOR = 140f
         private const val FLICK_VEL_PX_MS = 0.6f
