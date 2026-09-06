@@ -167,13 +167,14 @@ class TouchpadEngine(
                     hub.modDown(Mods.LCTRL)     // 缩放 = Ctrl+滚轮
                 }
                 if (pinchLocked) {
-                    pendingWheel += dd          // 间距拉大 = 滚轮向上 = 放大
+                    pendingWheel -= dd          // 张开 = 滚轮向上 = 放大（对齐 Windows 触控板惯例）
                 } else {
-                    pendingWheel += dy / 2f
+                    // 双指滚动灵敏度取滚动条的一半：两指齐扫天然位移大，再叠惯性会明显过冲
+                    pendingWheel += dy / 4f
                     // 带符号的平均位移：捏合时两指反向移动相互抵消（判据才放行），
                     // 同向滚动则累加，用绝对值会在竖向捏合时永远锁不上缩放意图
                     pinchDy += dy / 2f
-                    trackWheelVel(dy / 2f)
+                    trackWheelVel(dy / 4f)
                 }
             }
             else -> {
