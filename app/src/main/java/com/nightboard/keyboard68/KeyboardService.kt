@@ -20,7 +20,7 @@ class KeyboardService : Service(), App.HidUi {
     override fun onCreate() {
         super.onCreate()
         val app = application as App
-        app.ensureHid()
+        app.applyConnMode()
         app.addUi(this)
         startAsForeground()
     }
@@ -70,11 +70,10 @@ class KeyboardService : Service(), App.HidUi {
 
     private fun buildNotification(): Notification {
         val app = application as App
-        val host = app.hid.hostName()
         val text = when {
-            host != null -> "已连接 $host · 点按回到键盘"
-            app.hid.isRegistered() -> "键盘就绪 · 等待电脑连接"
-            else -> "蓝牙键盘未就绪"
+            app.hub.btConnected || app.hub.lanConnected ->
+                "已连接（${app.hub.statusLine()}）· 点按回到键盘"
+            else -> "键盘就绪 · ${app.hub.statusLine()}"
         }
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, KeyboardActivity::class.java),

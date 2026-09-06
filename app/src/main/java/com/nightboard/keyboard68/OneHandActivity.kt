@@ -8,11 +8,12 @@ import android.view.View
 import android.view.WindowManager
 
 /**
- * 键盘界面：横屏全屏，整块屏幕就是 68 键键盘。
+ * 单手模式：竖屏全屏，上触摸板 + 中快捷键 + 下 26 键。
+ * 与横屏 68 键（KeyboardActivity）并存，互相可切换。
  */
-class KeyboardActivity : Activity(), App.HidUi {
+class OneHandActivity : Activity(), App.HidUi {
 
-    private lateinit var view: KeyboardView
+    private lateinit var view: OneHandView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,10 +34,10 @@ class KeyboardActivity : Activity(), App.HidUi {
             }
         }
 
-        view = KeyboardView(this, (application as App).hub)
+        view = OneHandView(this, (application as App).hub)
         setContentView(view)
 
-        // 前台服务保活：退出键盘页面 / 锁屏后连接不掉线
+        // 前台服务保活（与横屏共用同一个服务）
         startForegroundService(Intent(this, KeyboardService::class.java))
     }
 
@@ -49,7 +50,6 @@ class KeyboardActivity : Activity(), App.HidUi {
 
     override fun onPause() {
         super.onPause()
-        // 亮度控制权交还系统，避免影响其他页面
         window.attributes = window.attributes.apply {
             screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         }

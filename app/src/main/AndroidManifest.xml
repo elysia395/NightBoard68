@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 局域网模式：TCP 连电脑 + UDP 自动发现 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:name=".App"
@@ -33,6 +37,14 @@
             android:exported="false"
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
+            android:showWhenLocked="false" />
+
+        <!-- 单手模式：竖屏全屏，触摸板 + 快捷键 + 26 键 -->
+        <activity
+            android:name=".OneHandActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
             android:showWhenLocked="false" />
 
         <activity

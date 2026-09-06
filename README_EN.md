@@ -15,6 +15,22 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
+> **Current version: v1.3.0** (based on upstream v1.2.1, version numbering aligned
+> with this repository). What's new in v1.3.0:
+>
+> - **LAN mode** — connect over Wi-Fi for 2–10 ms latency (vs 15–40 ms over
+>   Bluetooth). Ships with `NightBoardAgent`, a portable 13 KB Windows exe
+>   (no install). Bluetooth and LAN are two independent modes, switchable
+>   anywhere; Bluetooth behavior is unchanged from v1.2.1.
+> - **Portrait mode** — a one-hand vertical layout: touchpad (with edge scroll
+>   strip), customizable shortcut slots, programming symbols row, F-row,
+>   number row and a phone-style QWERTY.
+> - **Interaction** — double-tap Shift = caps-like lock, long-press touchpad =
+>   right click, tunable scroll sensitivity; fixes tap-to-latch modifiers
+>   dropping on finger lift (v1.2.1 bug).
+>
+> See the [Chinese README](README.md#v130-改动点相对上游-v121) for the full changelog.
+
 ## Why I built this
 
 I like to study and code at night in my dorm, but a mechanical keyboard is

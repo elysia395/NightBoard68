@@ -27,6 +27,9 @@ import android.widget.TextView
 class MainActivity : Activity(), App.HidUi {
 
     private lateinit var status: TextView
+    private lateinit var modeHint: TextView
+    private lateinit var btModeBtn: Button
+    private lateinit var lanModeBtn: Button
     private lateinit var deviceBox: LinearLayout
     private lateinit var enableBt: Button
     private lateinit var discoverBt: Button
@@ -63,6 +66,36 @@ class MainActivity : Activity(), App.HidUi {
         box.addView(label("手机横过来，就是宿舍的 68 键蓝牙键盘", 14f, dim))
         box.addView(label("", 6f, dim))
 
+        // ---------- 连接模式选择：蓝牙 / 局域网 两个独立模式，按场景自选 ----------
+        val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun modeBtn(caption: String, m: String): Button = Button(this).apply {
+            text = caption
+            setOnClickListener {
+                if (app.hub.mode != m) {
+                    app.hub.releaseAll()
+                    getSharedPreferences("nightboard", MODE_PRIVATE).edit()
+                        .putString("conn_mode", m).apply()
+                    app.applyConnMode()
+                    refresh()
+                }
+            }
+        }
+        btModeBtn = modeBtn("蓝牙模式", InputHub.MODE_BT)
+        lanModeBtn = modeBtn("局域网模式", InputHub.MODE_LAN)
+        modeRow.addView(
+            btModeBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.rightMargin = (4 * dp).toInt() }
+        )
+        modeRow.addView(
+            lanModeBtn,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.leftMargin = (4 * dp).toInt() }
+        )
+        box.addView(modeRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        modeHint = label("", 12f, dim)
+        box.addView(modeHint)
+        box.addView(label("", 6f, dim))
+
         status = label("", 16f)
         box.addView(status)
 
@@ -89,7 +122,21 @@ class MainActivity : Activity(), App.HidUi {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = (12 * dp).toInt() })
 
         box.addView(Button(this).apply {
-            text = "⚙ 设置（震动 / 亮度 / 回连）"
+            text = "🖐 竖屏模式"
+            setOnClickListener { startActivity(Intent(this@MainActivity, OneHandActivity::class.java)) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        box.addView(Button(this).apply {
+            text = "⟳ 检查连接（蓝牙 / 局域网）"
+            setOnClickListener {
+                app.hub.checkConnections()
+                status.text = "正在检查：局域网重新搜索电脑，蓝牙尝试回连…"
+                status.setTextColor(dim)
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        box.addView(Button(this).apply {
+            text = "⚙ 设置（震动 / 亮度 / 局域网）"
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -141,7 +188,7 @@ class MainActivity : Activity(), App.HidUi {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            app.ensureHid()   // 修复：权限到位后重新触发 HID 注册
+            app.applyConnMode()   // 修复：权限到位后重新触发当前模式
         }
         refresh()
     }
@@ -161,14 +208,51 @@ class MainActivity : Activity(), App.HidUi {
         if (missing.isNotEmpty()) {
             requestPermissions(missing.toTypedArray(), 1)
         } else {
-            app.ensureHid()
+            app.applyConnMode()
         }
     }
 
     private fun refresh() {
+        // 模式按钮高亮 + 模式说明
+        val activeBg = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(accent) }
+        val normalBg = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(Color.parseColor("#1C232D")) }
+        val lanMode = app.hub.mode == InputHub.MODE_LAN
+        btModeBtn.background = if (lanMode) normalBg else activeBg
+        btModeBtn.setTextColor(if (lanMode) fg else Color.parseColor("#0E1116"))
+        lanModeBtn.background = if (lanMode) activeBg else normalBg
+        lanModeBtn.setTextColor(if (lanMode) Color.parseColor("#0E1116") else fg)
+        modeHint.text = if (lanMode) {
+            "局域网模式：电脑双击运行 NightBoardAgent.exe，手机连同一 WiFi，延迟更低"
+        } else {
+            "蓝牙模式：电脑零安装，首次按下方引导配对一次即可"
+        }
+
         when {
+            // ---------- 局域网模式：只看 LAN 状态 ----------
+            lanMode -> {
+                enableBt.visibility = ViewGroup.GONE
+                discoverBt.visibility = ViewGroup.GONE
+                deviceBox.removeAllViews()
+                when {
+                    app.hub.lanConnected -> {
+                        val rtt = app.lan.rttMs
+                        val name = app.lan.agentName ?: "电脑"
+                        status.text = "● 局域网已连接 $name${if (rtt >= 0) " · ${rtt}ms" else ""} — 点「开始打字」"
+                        status.setTextColor(accent)
+                    }
+                    app.lan.state == LanKeyboard.State.CONNECTING -> {
+                        status.text = "◌ 正在连接电脑…（确认电脑已运行 NightBoardAgent）"
+                        status.setTextColor(dim)
+                    }
+                    else -> {
+                        status.text = "○ 正在搜索电脑…（需同一 WiFi；搜不到就在设置里手动填 IP）"
+                        status.setTextColor(accent)
+                    }
+                }
+            }
+            // ---------- 蓝牙模式 ----------
             app.btAdapter == null -> {
-                status.text = "× 本机没有蓝牙"
+                status.text = "× 本机没有蓝牙（想用局域网模式可切换）"
                 status.setTextColor(red)
                 enableBt.visibility = ViewGroup.GONE
                 discoverBt.visibility = ViewGroup.GONE
@@ -198,7 +282,7 @@ class MainActivity : Activity(), App.HidUi {
             else -> {
                 val host = app.hid.hostName()
                 if (host != null) {
-                    status.text = "● 已连接：$host — 点「开始打字」"
+                    status.text = "● 蓝牙已连接：$host — 点「开始打字」"
                     status.setTextColor(accent)
                     discoverBt.visibility = ViewGroup.GONE
                 } else {

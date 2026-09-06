@@ -31,7 +31,7 @@ import android.view.View
  *  - 顶部状态条：中英 / 输入法 / 触控板 / 退出 快捷按钮
  *  - 触控板模式：整屏变触控板，单指移动、轻点左键、双指轻点右键、双指滚动
  */
-class KeyboardView(context: Context, private val hid: HidKeyboard) : View(context) {
+class KeyboardView(context: Context, private val hub: InputHub) : View(context) {
 
     private class KeyRect(val key: Key, l: Float, t: Float, r: Float, b: Float) {
         val rect = RectF(l, t, r, b)
@@ -60,6 +60,9 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
     private val pointerSent = HashMap<Int, Int>()
     private val pointerHeldMods = HashMap<Int, Int>()   // 按住型修饰键（Win / 按住模式）
     private val latchedMods = HashSet<Key>()
+    /** 双击 Shift 后的持续锁定（替代 CapsLock：锁定期间字母全大写、符号全上档） */
+    private var lockedBits = 0
+    private var lastShiftLatchAt = 0L
     private var fnLatched = false
 
     // 修饰键组合（如 Ctrl+Shift 切输入法）：延迟发送，期间打字则取消
@@ -76,6 +79,11 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
     private var tpPendingDy = 0f
     private var tpPendingWheel = 0f
     private var tpLastFlush = 0L
+    // 单指长按 = 右键
+    private var tpLongPressRun: Runnable? = null
+    private var tpLongPressFired = false
+    // 右缘滚动条：落在条内的手指上下滑 = 滚动（双指滑动的单指平替）
+    private val pointerInScroll = HashSet<Int>()
 
     // 颜色
     private val colorBg = Color.parseColor("#0E1116")
@@ -133,6 +141,9 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         // 顶部快捷按钮：从右往左排（状态文本在左侧）
         val btnDefs = listOf(
             Triple("✕", BTN_EXIT, dp(34f)),
+            Triple(if (hub.mode == InputHub.MODE_LAN) "局域网" else "蓝牙", BTN_MODE, dp(56f)),
+            Triple("检查", BTN_CHECK, dp(46f)),
+            Triple("竖屏", BTN_ONEHAND, dp(46f)),
             Triple(if (touchMode) "键盘" else "触控板", BTN_PAD, dp(60f)),
             Triple("输入法", BTN_IME, dp(64f)),
             Triple("中英", BTN_SHIFT, dp(52f)),
@@ -166,8 +177,12 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
             val k = r.key
             val pressed = pointerKeys.containsValue(r)
             val latched = k.isModifier && k.modBit != Mods.LGUI && k in latchedMods
+            // 双击锁定的 Shift：橙框 + 下缘橙条
+            val locked = k.isModifier &&
+                (k.modBit == Mods.LSHIFT || k.modBit == Mods.RSHIFT) &&
+                (lockedBits and k.modBit) != 0
             // 电脑发回的 LED 状态：大写锁定时 Caps 键常亮
-            val capsLit = k.code == Hid.CAPSLOCK && hid.capsOn
+            val capsLit = k.code == Hid.CAPSLOCK && hub.capsOn
             val fnActive = fnLatched && k.fnLabel != null
 
             paintFill.color = when {
@@ -177,15 +192,23 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
             }
             canvas.drawRoundRect(r.rect, radius, radius, paintFill)
 
-            if (latched || fnActive || capsLit) {
+            if (latched || fnActive || capsLit || locked) {
                 paintStroke.color = colorAccent
                 canvas.drawRoundRect(r.rect, radius, radius, paintStroke)
+            }
+            if (locked) {
+                paintFill.color = colorAccent
+                canvas.drawRoundRect(
+                    RectF(r.rect.left + dp(10f), r.rect.bottom - dp(5f), r.rect.right - dp(10f), r.rect.bottom - dp(2f)),
+                    dp(2f), dp(2f), paintFill,
+                )
             }
 
             if (k.label.isNotEmpty()) {
                 paintText.color = when {
                     fnActive -> colorAccent
                     capsLit && k.code == Hid.CAPSLOCK -> colorAccent
+                    locked -> colorAccent
                     else -> colorText
                 }
                 paintText.textSize = mainSize
@@ -215,17 +238,10 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
     }
 
     private fun drawStrip(canvas: Canvas) {
-        // 状态文本（按钮左侧的空间里）
-        paintStrip.color = colorDim
+        // 状态文本（按钮左侧的空间里）：蓝牙 / 局域网 双链路状态
+        paintStrip.color = if (hub.btConnected || hub.lanConnected) colorAccent else colorDim
         paintStrip.textSize = dp(13f)
-        val status = when {
-            hid.hostName() != null -> "● " + hid.hostName()
-            hid.isRegistered() -> "○ 等待电脑连接"
-            else -> "× 键盘未就绪"
-        }
-        val statusRight = stripButtons.lastOrNull()?.rect?.left ?: (pad + dp(4f))
-        canvas.drawText(status, pad + dp(4f), stripH / 2f + dp(5f), paintStrip)
-        // 超长时截断（粗略：只画一次，超出部分被按钮盖住也无碍）
+        canvas.drawText(hub.statusLine(), pad + dp(4f), stripH / 2f + dp(5f), paintStrip)
 
         // 快捷按钮
         for (b in stripButtons) {
@@ -258,11 +274,22 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         paintStroke.color = colorAccentDim
         canvas.drawRoundRect(RectF(l, t, r, b), radius, radius, paintStroke)
 
+        // 右缘滚动条（贴条上下滑 = 滚动）
+        paintFill.color = Color.parseColor("#161D27")
+        canvas.drawRoundRect(
+            RectF(r - dp(30f), t + dp(5f), r - dp(4f), b - dp(5f)),
+            radius, radius, paintFill,
+        )
+        paintText.color = Color.parseColor("#5A6474")
+        paintText.textSize = dp(10f)
+        val fm = paintText.fontMetrics
+        canvas.drawText("滚", r - dp(17f), t + dp(26f) - fm.ascent - fm.descent, paintText)
+
         paintText.color = colorDim
         paintText.textSize = dp(22f)
         canvas.drawText("触控板", width / 2f, height / 2f - dp(10f), paintText)
         paintText.textSize = dp(13f)
-        canvas.drawText("单指移动 · 轻点=左键 · 双指轻点=右键 · 双指滑动=滚动", width / 2f, height / 2f + dp(18f), paintText)
+        canvas.drawText("单指移动 · 轻点=左键 · 长按=右键 · 右缘条/双指上下滑=滚动", width / 2f, height / 2f + dp(18f), paintText)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -303,13 +330,26 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
     private fun onStripButton(id: Int) {
         haptic()
         when (id) {
-            BTN_SHIFT -> hid.tapMods(Mods.LSHIFT)                  // 单发 Shift：切中英文
-            BTN_IME -> hid.tapMods(Mods.LCTRL or Mods.LSHIFT)      // Ctrl+Shift：切输入法
+            BTN_SHIFT -> hub.tapMods(Mods.LSHIFT)                  // 单发 Shift：切中英文
+            BTN_IME -> hub.tapMods(Mods.LCTRL or Mods.LSHIFT)      // Ctrl+Shift：切输入法
             BTN_PAD -> {
                 touchMode = !touchMode
                 releaseAll()
                 computeLayout()   // 按钮文字换成「键盘」
             }
+            BTN_ONEHAND -> {
+                releaseAll()
+                context.startActivity(android.content.Intent(context, OneHandActivity::class.java))
+            }
+            BTN_MODE -> {
+                // 蓝牙/局域网 独立模式一键切换
+                releaseAll()
+                val next = if (hub.mode == InputHub.MODE_LAN) InputHub.MODE_BT else InputHub.MODE_LAN
+                prefs.edit().putString("conn_mode", next).apply()
+                (context.applicationContext as App).applyConnMode()
+                computeLayout()   // 按钮文字换成当前模式
+            }
+            BTN_CHECK -> hub.checkConnections()
             BTN_EXIT -> (context as Activity).finish()
         }
         invalidate()
@@ -325,15 +365,30 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         when {
             k.isModifier && (modHold || k.modBit == Mods.LGUI) -> {
                 pointerHeldMods[pid] = k.modBit
-                hid.modDown(k.modBit)
+                hub.modDown(k.modBit)
             }
             k.isModifier -> {
+                val isShift = k.modBit == Mods.LSHIFT || k.modBit == Mods.RSHIFT
                 when {
+                    // 已锁定的 Shift：点一下解锁
+                    isShift && (lockedBits and k.modBit) != 0 -> {
+                        cancelPendingChord(clearBits = true)
+                        lockedBits = lockedBits and k.modBit.inv()
+                        hub.modUp(k.modBit)
+                    }
+                    // 双击 Shift（280ms 内）= 持续锁定；锁住期间键帽下缘亮橙条
+                    isShift && latchedMods.contains(k) &&
+                        SystemClock.uptimeMillis() - lastShiftLatchAt < DOUBLE_TAP_LOCK_MS -> {
+                        cancelPendingChord(clearBits = true)
+                        latchedMods.remove(k)
+                        lockedBits = lockedBits or k.modBit
+                        hub.modDown(k.modBit)
+                    }
                     latchedMods.contains(k) -> {
                         // 再点一次已锁定的修饰键 = 单独发送（Shift 单点切中英文）
                         cancelPendingChord(clearBits = true)
                         latchedMods.remove(k)
-                        hid.tapMods(k.modBit)
+                        hub.tapMods(k.modBit)
                     }
                     pendingChordBits != 0 -> {
                         // 组合键里再加一个修饰键，重新计时
@@ -345,7 +400,10 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
                         pendingChordBits = latchedBits() or k.modBit
                         scheduleChord()
                     }
-                    else -> latchedMods.add(k)
+                    else -> {
+                        latchedMods.add(k)
+                        if (isShift) lastShiftLatchAt = SystemClock.uptimeMillis()
+                    }
                 }
             }
             k.code == -1 -> fnLatched = !fnLatched
@@ -355,7 +413,7 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
                 pendingChordBits = 0
                 val code = if (fnLatched && k.fnLabel != null) k.fnCode else k.code
                 pointerSent[pid] = code
-                hid.keyDown(code, latchedBits() or chordBits)
+                hub.keyDown(code, latchedBits() or chordBits or k.autoMods)
             }
         }
         invalidate()
@@ -366,10 +424,14 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         val k = r.key
         when {
             k.isModifier && (modHold || k.modBit == Mods.LGUI) ->
-                pointerHeldMods.remove(pid)?.let { hid.modUp(it) }
-            // 锁存型修饰键 / Fn：手指抬起后保持锁存，由下一次普通键释放消费
+                pointerHeldMods.remove(pid)?.let { hub.modUp(it) }
+            k.isModifier -> {
+                // 锁存型修饰键自身抬起：保持锁存，等下一个普通键来消费
+                // （点 Ctrl 锁定 → 点 A = Ctrl+A；再点 Ctrl = 单发 Shift 类切换）
+            }
+            // 锁存型修饰键 / Fn：由下一次普通键释放消费
             else -> {
-                pointerSent.remove(pid)?.let { hid.keyUp(it) }
+                pointerSent.remove(pid)?.let { hub.keyUp(it) }
                 latchedMods.clear()
                 fnLatched = false
             }
@@ -409,7 +471,7 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
             val bits = pendingChordBits
             pendingChordBits = 0
             pendingChordAction = null
-            if (bits != 0) hid.tapMods(bits)
+            if (bits != 0) hub.tapMods(bits)
             latchedMods.clear()
             invalidate()
         }
@@ -430,14 +492,19 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         for (pid in pointerKeys.keys.toList()) release(pid)
         pointerKeys.clear()
         pointerSent.clear()
-        for (bit in pointerHeldMods.values) hid.modUp(bit)
+        for (bit in pointerHeldMods.values) hub.modUp(bit)
         pointerHeldMods.clear()
         latchedMods.clear()
+        lockedBits = 0
         fnLatched = false
-        hid.releaseAll()
+        hub.releaseAll()
         // 触控板残余状态
         tpPos.clear()
         tpPendingDx = 0f; tpPendingDy = 0f; tpPendingWheel = 0f
+        tpLongPressRun?.let { removeCallbacks(it) }
+        tpLongPressRun = null
+        tpLongPressFired = false
+        pointerInScroll.clear()
         invalidate()
     }
 
@@ -447,11 +514,31 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = e.actionIndex
-                tpPos[e.getPointerId(i)] = e.getX(i) to e.getY(i)
+                val x = e.getX(i)
+                val y = e.getY(i)
+                val pid = e.getPointerId(i)
+                tpPos[pid] = x to y
+                if (x >= width - pad - dp(34f)) pointerInScroll.add(pid)
                 if (tpPos.size > tpMaxPointers) tpMaxPointers = tpPos.size
                 if (tpPos.size == 1) {
                     tpDownAt = SystemClock.uptimeMillis()
                     tpMoveDist = 0f
+                    tpLongPressFired = false
+                    // 单指按住 500ms 不动 = 右键（滚动条手指/第二根手指落下/移动则取消）
+                    tpLongPressRun?.let { removeCallbacks(it) }
+                    if (pid !in pointerInScroll) {
+                        val run = Runnable {
+                            tpLongPressRun = null
+                            if (tpPos.size == 1 && tpMoveDist < 14f && !tpLongPressFired && pointerInScroll.isEmpty()) {
+                                tpLongPressFired = true
+                                haptic()
+                                hub.sendMouse(0, 0, 0, 2)
+                                postDelayed({ hub.sendMouse(0, 0, 0, 0) }, 45)
+                            }
+                        }
+                        tpLongPressRun = run
+                        postDelayed(run, TP_LONG_PRESS_MS)
+                    }
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -461,12 +548,14 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
                     val dx = e.getX(i) - old.first
                     val dy = e.getY(i) - old.second
                     tpPos[pid] = e.getX(i) to e.getY(i)
-                    if (tpPos.size == 1) {
-                        tpPendingDx += dx
-                        tpPendingDy += dy
-                        tpMoveDist += Math.abs(dx) + Math.abs(dy)
-                    } else if (tpPos.size == 2) {
-                        tpPendingWheel += dy / 2f
+                    when {
+                        tpPos.size >= 2 -> tpPendingWheel += dy / 2f
+                        pid in pointerInScroll -> tpPendingWheel += dy   // 右缘条：整幅位移算滚动
+                        else -> {
+                            tpPendingDx += dx
+                            tpPendingDy += dy
+                            tpMoveDist += Math.abs(dx) + Math.abs(dy)
+                        }
                     }
                 }
                 flushTouchpad(force = false)
@@ -474,15 +563,17 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val pid = e.getPointerId(e.actionIndex)
                 tpPos.remove(pid)
+                pointerInScroll.remove(pid)
                 if (tpPos.isEmpty()) {
                     flushTouchpad(force = true)
+                    tpLongPressRun?.let { removeCallbacks(it); tpLongPressRun = null }
                     val dur = SystemClock.uptimeMillis() - tpDownAt
-                    if (tpMoveDist < 14f && dur < 220f) {
-                        // 轻点：单指=左键，双指=右键
-                        val btn = if (tpMaxPointers >= 2) 2 else 1
-                        hid.sendMouse(0, 0, 0, btn)
-                        postDelayed({ hid.sendMouse(0, 0, 0, 0) }, 45)
+                    if (!tpLongPressFired && tpMaxPointers == 1 && tpMoveDist < 14f && dur < 220f) {
+                        // 轻点 = 左键（长按已发右键；双指轻点不再触发右键）
+                        hub.sendMouse(0, 0, 0, 1)
+                        postDelayed({ hub.sendMouse(0, 0, 0, 0) }, 45)
                     }
+                    tpLongPressFired = false
                     tpMaxPointers = 1
                 }
             }
@@ -501,14 +592,22 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
         if (!force && now - tpLastFlush < 12) return
         tpLastFlush = now
         if (tpPendingDx != 0f || tpPendingDy != 0f) {
-            hid.sendMouse(tpPendingDx.toInt(), tpPendingDy.toInt(), 0, 0)
-            tpPendingDx = 0f
-            tpPendingDy = 0f
+            // 只发送整数部分，小数余量留到下次累计——慢速拖动不再丢步
+            val sx = tpPendingDx.toInt()
+            val sy = tpPendingDy.toInt()
+            if (sx != 0 || sy != 0) {
+                tpPendingDx -= sx
+                tpPendingDy -= sy
+                hub.sendMouse(sx, sy, 0, 0)
+            }
         } else if (tpPendingWheel != 0f) {
-            // 手指上滑 = 滚轮向上（不习惯可以反馈，一行代码反转）
-            val w = (-tpPendingWheel / 25f).toInt().coerceIn(-3, 3)
-            if (w != 0) hid.sendMouse(0, 0, w, 0)
-            tpPendingWheel = 0f
+            // 滚动：一格 = 设置里的像素数（默认 24，可在设置页调灵敏度）
+            val notch = prefs.getInt("scroll_notch_px", 24).coerceIn(8, 80).toFloat()
+            val wv = (-tpPendingWheel / notch).toInt()
+            if (wv != 0) {
+                tpPendingWheel += wv * notch
+                hub.sendMouse(0, 0, wv.coerceIn(-6, 6), 0)
+            }
         }
     }
 
@@ -537,10 +636,15 @@ class KeyboardView(context: Context, private val hid: HidKeyboard) : View(contex
 
     companion object {
         private const val CHORD_DELAY_MS = 300L
+        private const val DOUBLE_TAP_LOCK_MS = 280L
+        private const val TP_LONG_PRESS_MS = 500L
         private const val HIT_SLOP_DP = 3f   // 死区就近归属半径（间隙 4dp 时 3dp 恰好完全覆盖）
         private const val BTN_SHIFT = 1
         private const val BTN_IME = 2
         private const val BTN_PAD = 3
         private const val BTN_EXIT = 4
+        private const val BTN_ONEHAND = 5
+        private const val BTN_CHECK = 6
+        private const val BTN_MODE = 7
     }
 }
