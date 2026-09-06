@@ -30,3 +30,15 @@ NightBoardAgent —— NightBoard68 局域网模式电脑端接收程序
 退出：关闭窗口，或 Ctrl+C。
 自编译：双击 build.bat（用 Windows 自带的编译器，无需装任何东西）。
  verbose：命令行运行 NightBoardAgent.exe -v 可看到每个按键事件。
+
+开机自启（v1.3.0+）
+  想让本程序开机自动后台运行、不用每次手动双击：
+    开启：  NightBoardAgent.exe --install
+    关闭：  NightBoardAgent.exe --uninstall
+    查状态：NightBoardAgent.exe --check-autostart
+  原理是写入「当前用户」的注册表 Run 键（HKCU），不需要管理员权限，
+  也对所有用户无影响。开机自启后会以最小化方式运行（任务栏图标可见，
+  不弹窗、不抢焦点）；想真正隐藏窗口请用计划任务/服务，这里不展开。
+  自启用文件路径以"程序所在位置"为准——把 exe 移到别处后需要重跑一次
+  --install 才能更新路径。
+

@@ -30,6 +30,11 @@ HID device — **zero software to install on the PC**.
 >   dropping on finger lift (v1.2.1 bug).
 >
 > See the [Chinese README](README.md#v130-改动点相对上游-v121) for the full changelog.
+>
+> Autostart the PC agent at login (LAN mode): run once from a terminal —
+> `NightBoardAgent.exe --install` to enable, `--uninstall` to remove. It writes
+> the current user's registry Run key (no admin rights needed) and launches
+> minimized at next login.
 
 ## Why I built this
 

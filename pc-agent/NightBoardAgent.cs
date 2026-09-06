@@ -19,6 +19,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Microsoft.Win32;
 
 class NightBoardAgent
 {
@@ -26,13 +27,37 @@ class NightBoardAgent
     const int TRANSPORT_PORT = 6868;
     const string DISCOVER_REQ = "NB68_DISCOVER_V1";
 
+    // 开机自启：写到当前用户的注册表 Run 键（HKCU，无需管理员权限）。
+    // 存的命令是 "<exe全路径>" --minimized，登录后静默最小化启动，不抢焦点。
+    const string RUN_KEY = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    const string RUN_VALUE = "NightBoardAgent";
+
     static long eventCount = 0;
     static volatile TcpClient activeClient;
 
     static void Main(string[] args)
     {
-        bool verbose = args.Length > 0 && (args[0] == "-v" || args[0] == "--verbose");
+        bool verbose = HasArg(args, "-v", "--verbose");
+        bool minimized = HasArg(args, "-m", "--minimized", "--start-minimized");
+
+        // 纯配置命令：执行后立即退出，不启动服务（方便脚本调用 / 双击即用）
+        if (HasArg(args, "--install", "--autostart-on")) { EnableAutostart(); return; }
+        if (HasArg(args, "--uninstall", "--autostart-off", "--remove-autostart")) { DisableAutostart(); return; }
+        if (HasArg(args, "--check-autostart", "--status")) { Console.WriteLine(AutostartStatus()); return; }
+        if (HasArg(args, "--help", "-h"))
+        {
+            Console.WriteLine("用法: NightBoardAgent.exe [选项]");
+            Console.WriteLine("  (无参数)        正常启动接收服务");
+            Console.WriteLine("  --minimized     启动后最小化到任务栏（开机自启用）");
+            Console.WriteLine("  --install       开启开机自启并退出");
+            Console.WriteLine("  --uninstall     关闭开机自启并退出");
+            Console.WriteLine("  --check-autostart  打印自启状态并退出");
+            Console.WriteLine("  -v / --verbose  打印每条按键的 HID 码");
+            return;
+        }
+
         try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+        if (minimized) MinimizeConsole();
 
         Console.WriteLine("==============================================");
         Console.WriteLine("  NightBoardAgent - NightBoard68 局域网接收端");
@@ -40,6 +65,10 @@ class NightBoardAgent
         Console.WriteLine("本机名: " + Environment.MachineName);
         Console.WriteLine("端口:   UDP " + DISCOVERY_PORT + " (发现) / TCP " + TRANSPORT_PORT + " (输入)");
         Console.WriteLine("退出:   关闭本窗口或按 Ctrl+C");
+        Console.WriteLine("----------------------------------------------");
+        Console.WriteLine(AutostartStatus());
+        Console.WriteLine("  开启自启: NightBoardAgent.exe --install");
+        Console.WriteLine("  关闭自启: NightBoardAgent.exe --uninstall");
         Console.WriteLine("----------------------------------------------");
         Console.WriteLine("首次使用如弹出 Windows 防火墙提示，请点【允许】");
         Console.WriteLine("(勾选\"专用网络\")，否则手机搜不到本机。");
@@ -495,6 +524,86 @@ class NightBoardAgent
         return sb.ToString();
     }
 
+    // ---------- 开机自启 ----------
+
+    static bool HasArg(string[] args, params string[] names)
+    {
+        foreach (var a in args)
+            foreach (var n in names)
+                if (string.Equals(a, n, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    static string ExePath()
+    {
+        // Assembly.Location 在某些托管宿主下可能为空，MainModule.FileName 更可靠
+        try { return Process.GetCurrentProcess().MainModule.FileName; }
+        catch { return System.Reflection.Assembly.GetEntryAssembly().Location; }
+    }
+
+    static string AutostartCommand()
+    {
+        return "\"" + ExePath() + "\" --minimized";
+    }
+
+    static bool IsAutostartEnabled()
+    {
+        try
+        {
+            using (var k = Registry.CurrentUser.OpenSubKey(RUN_KEY, false))
+            {
+                if (k == null) return false;
+                return k.GetValue(RUN_VALUE) != null;
+            }
+        }
+        catch { return false; }
+    }
+
+    static void EnableAutostart()
+    {
+        try
+        {
+            using (var k = Registry.CurrentUser.CreateSubKey(RUN_KEY, true))
+            {
+                k.SetValue(RUN_VALUE, AutostartCommand(), RegistryValueKind.String);
+            }
+            Log("已设置开机自启：下次登录 Windows 后会自动以最小化方式启动本程序。");
+        }
+        catch (Exception e) { Log("设置开机自启失败: " + e.Message); }
+    }
+
+    static void DisableAutostart()
+    {
+        try
+        {
+            using (var k = Registry.CurrentUser.OpenSubKey(RUN_KEY, true))
+            {
+                if (k != null && k.GetValue(RUN_VALUE) != null) k.DeleteValue(RUN_VALUE, false);
+            }
+            Log("已关闭开机自启。");
+        }
+        catch (Exception e) { Log("关闭开机自启失败: " + e.Message); }
+    }
+
+    static string AutostartStatus()
+    {
+        return IsAutostartEnabled()
+            ? "开机自启: 已开启 ✓（登录 Windows 后自动最小化启动）"
+            : "开机自启: 未开启";
+    }
+
+    // ---------- 控制台最小化（自启场景用，避免登录后抢焦点） ----------
+
+    static void MinimizeConsole()
+    {
+        try
+        {
+            var hwnd = GetConsoleWindow();
+            if (hwnd != IntPtr.Zero) ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+        }
+        catch { }
+    }
+
     static void Log(string msg)
     {
         Console.WriteLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg);
@@ -552,4 +661,12 @@ class NightBoardAgent
 
     [DllImport("user32.dll")]
     static extern short GetKeyState(int nVirtKey);
+
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    const int SW_SHOWMINNOACTIVE = 7;   // 最小化但不抢焦点（自启场景）
 }
