@@ -30,10 +30,18 @@ import android.view.View
  *  - 普通键：按住不放 = 电脑端自动连发
  *  - 顶部状态条：中英 / 输入法 / 触控板 / 退出 快捷按钮
  *  - 触控板模式：整屏变触控板，单指移动、轻点左键、双指轻点右键、双指滚动
+ *  - 布局编辑：点顶部「布局」，左右拖动任意键帽改变键宽；同一行自动重新分配空间
  */
 class KeyboardView(context: Context, private val hub: InputHub) : View(context) {
 
-    private class KeyRect(val key: Key, l: Float, t: Float, r: Float, b: Float) {
+    private class KeyRect(
+        val key: Key,
+        val prefKey: String,
+        l: Float,
+        t: Float,
+        r: Float,
+        b: Float,
+    ) {
         val rect = RectF(l, t, r, b)
         fun contains(x: Float, y: Float) = rect.contains(x, y)
     }
@@ -76,6 +84,15 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     // 触控板模式
     private var touchMode = false
+
+    // 键宽编辑：比例按行列位置持久化，避免 Shift/Ctrl 等重复标签互相覆盖
+    private var layoutEditMode = false
+    private val keyWidthScales = HashMap<String, Float>()
+    private var resizePointerId = INVALID_POINTER_ID
+    private var resizingKeyId: String? = null
+    private var selectedKeyId: String? = null
+    private var resizeStartX = 0f
+    private var resizeStartScale = 1f
 
     // 颜色
     private val colorBg = Color.parseColor("#0E1116")
@@ -120,26 +137,42 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         rowH = (h - stripH - pad * 2 - gap * 4) / 5f
         val list = ArrayList<KeyRect>(68)
         var y = stripH + pad
-        for (row in Layout68.rows) {
+        for ((rowIndex, row) in Layout68.rows.withIndex()) {
+            // 自定义比例改变的是本行各键之间的占比；归一化回 16u，整行永远不会溢出屏幕。
+            val rawWidths = row.mapIndexed { column, key ->
+                key.width * keyWidthScale(widthPrefKey(rowIndex, column))
+            }
+            val normalize = ROW_WIDTH_UNITS / rawWidths.sum()
             var x = pad
-            for (k in row) {
-                list.add(KeyRect(k, x, y, x + k.width * unitW, y + rowH))
-                x += k.width * unitW + gap
+            for ((column, key) in row.withIndex()) {
+                val keyWidth = rawWidths[column] * normalize * unitW
+                val prefKey = widthPrefKey(rowIndex, column)
+                list.add(KeyRect(key, prefKey, x, y, x + keyWidth, y + rowH))
+                x += keyWidth + gap
             }
             y += rowH + gap
         }
         rects = list
 
         // 顶部快捷按钮：从右往左排（状态文本在左侧）
-        val btnDefs = listOf(
-            Triple("✕", BTN_EXIT, dp(34f)),
-            Triple(if (hub.mode == InputHub.MODE_LAN) "局域网" else "蓝牙", BTN_MODE, dp(56f)),
-            Triple("检查", BTN_CHECK, dp(46f)),
-            Triple("竖屏", BTN_ONEHAND, dp(46f)),
-            Triple(if (touchMode) "键盘" else "触控板", BTN_PAD, dp(60f)),
-            Triple("输入法", BTN_IME, dp(64f)),
-            Triple("中英", BTN_SHIFT, dp(52f)),
-        )
+        val btnDefs = if (layoutEditMode) {
+            listOf(
+                Triple("✕", BTN_EXIT, dp(34f)),
+                Triple("完成", BTN_LAYOUT, dp(52f)),
+                Triple("重置", BTN_LAYOUT_RESET, dp(52f)),
+            )
+        } else {
+            listOf(
+                Triple("✕", BTN_EXIT, dp(34f)),
+                Triple(if (hub.mode == InputHub.MODE_LAN) "局域网" else "蓝牙", BTN_MODE, dp(56f)),
+                Triple("检查", BTN_CHECK, dp(46f)),
+                Triple("竖屏", BTN_ONEHAND, dp(46f)),
+                Triple("布局", BTN_LAYOUT, dp(46f)),
+                Triple(if (touchMode) "键盘" else "触控板", BTN_PAD, dp(60f)),
+                Triple("输入法", BTN_IME, dp(64f)),
+                Triple("中英", BTN_SHIFT, dp(52f)),
+            )
+        }
         val btnH = dp(24f)
         val btnY = (stripH - btnH) / 2f
         var xr = w - pad - dp(2f)
@@ -167,6 +200,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
         for (r in rects) {
             val k = r.key
+            val editing = layoutEditMode && r.prefKey == selectedKeyId
             val pressed = pointerKeys.containsValue(r)
             val latched = k.isModifier && k.modBit != Mods.LGUI && k in latchedMods
             // 双击锁定的 Shift：橙框 + 下缘橙条
@@ -178,14 +212,15 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
             val fnActive = fnLatched && k.fnLabel != null
 
             paintFill.color = when {
+                editing -> colorKeyLatched
                 pressed -> colorKeyPressed
                 latched -> colorKeyLatched
                 else -> colorKey
             }
             canvas.drawRoundRect(r.rect, radius, radius, paintFill)
 
-            if (latched || fnActive || capsLit || locked) {
-                paintStroke.color = colorAccent
+            if (layoutEditMode || latched || fnActive || capsLit || locked) {
+                paintStroke.color = if (editing || latched || fnActive || capsLit || locked) colorAccent else colorAccentDim
                 canvas.drawRoundRect(r.rect, radius, radius, paintStroke)
             }
             if (locked) {
@@ -196,8 +231,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 )
             }
 
-            if (k.label.isNotEmpty()) {
+            val visibleLabel = if (layoutEditMode && k.label.isEmpty()) "空格" else k.label
+            if (visibleLabel.isNotEmpty()) {
                 paintText.color = when {
+                    editing -> colorAccent
                     fnActive -> colorAccent
                     capsLit && k.code == Hid.CAPSLOCK -> colorAccent
                     locked -> colorAccent
@@ -208,10 +245,28 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 val cy = r.rect.centerY() + if (k.fnLabel != null) mainSize * 0.22f else 0f
                 val fm = paintText.fontMetrics
                 canvas.drawText(
-                    if (fnActive) k.fnLabel!! else k.label,
+                    if (fnActive) k.fnLabel!! else visibleLabel,
                     cx,
                     cy - (fm.ascent + fm.descent) / 2f,
                     paintText,
+                )
+            }
+
+            if (editing) {
+                // 右侧双线是拖动把手；比例同时显示在键帽左下角。
+                paintStroke.color = colorAccent
+                paintStroke.strokeWidth = dp(2f)
+                val handleX = r.rect.right - dp(7f)
+                canvas.drawLine(handleX - dp(3f), r.rect.centerY() - dp(9f), handleX - dp(3f), r.rect.centerY() + dp(9f), paintStroke)
+                canvas.drawLine(handleX + dp(3f), r.rect.centerY() - dp(9f), handleX + dp(3f), r.rect.centerY() + dp(9f), paintStroke)
+                paintStroke.strokeWidth = dp(1.5f)
+                paintStrip.color = colorAccent
+                paintStrip.textSize = dp(9f)
+                canvas.drawText(
+                    "%.0f%%".format(keyWidthScale(r.prefKey) * 100f),
+                    r.rect.left + dp(6f),
+                    r.rect.bottom - dp(5f),
+                    paintStrip,
                 )
             }
 
@@ -230,14 +285,20 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     }
 
     private fun drawStrip(canvas: Canvas) {
-        // 状态文本（按钮左侧的空间里）：蓝牙 / 局域网 双链路状态
-        paintStrip.color = if (hub.btConnected || hub.lanConnected) colorAccent else colorDim
+        val status = if (layoutEditMode) {
+            val selected = rects.firstOrNull { it.prefKey == selectedKeyId }
+            if (selected == null) "布局编辑 · 选中键帽后左右拖动" else "正在调整 ${keyName(selected.key)} · 左右拖动"
+        } else {
+            hub.statusLine()
+        }
+        // 普通模式显示连接状态；布局编辑时显示操作提示。
+        paintStrip.color = if (layoutEditMode || hub.btConnected || hub.lanConnected) colorAccent else colorDim
         paintStrip.textSize = dp(13f)
-        canvas.drawText(hub.statusLine(), pad + dp(4f), stripH / 2f + dp(5f), paintStrip)
+        canvas.drawText(status, pad + dp(4f), stripH / 2f + dp(5f), paintStrip)
 
         // 快捷按钮
         for (b in stripButtons) {
-            val active = b.id == BTN_PAD && touchMode
+            val active = (b.id == BTN_PAD && touchMode) || (b.id == BTN_LAYOUT && layoutEditMode)
             paintFill.color = if (active) colorKeyLatched else colorKey
             canvas.drawRoundRect(b.rect, radius, radius, paintFill)
             if (active) {
@@ -285,6 +346,12 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        // 调整中的手指即使滑进顶部状态条，也继续归布局编辑处理，避免误触按钮。
+        if (layoutEditMode && resizePointerId != INVALID_POINTER_ID) {
+            handleLayoutResize(e)
+            return true
+        }
+
         val i = e.actionIndex
         val x = e.getX(i)
         val y = e.getY(i)
@@ -299,6 +366,11 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                     }
                 }
             }
+            return true
+        }
+
+        if (layoutEditMode) {
+            handleLayoutResize(e)
             return true
         }
 
@@ -329,6 +401,21 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 releaseAll()
                 computeLayout()   // 按钮文字换成「键盘」
             }
+            BTN_LAYOUT -> {
+                finishLayoutResize(save = true)
+                if (!layoutEditMode) {
+                    releaseAll()
+                    touchMode = false
+                }
+                layoutEditMode = !layoutEditMode
+                selectedKeyId = null
+                computeLayout()
+            }
+            BTN_LAYOUT_RESET -> {
+                finishLayoutResize(save = false)
+                resetCustomKeyWidths()
+                computeLayout()
+            }
             BTN_ONEHAND -> {
                 releaseAll()
                 context.startActivity(android.content.Intent(context, OneHandActivity::class.java))
@@ -346,6 +433,78 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         }
         invalidate()
     }
+
+    // ---------- 键宽编辑 ----------
+
+    private fun handleLayoutResize(e: MotionEvent) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val i = e.actionIndex
+                val keyRect = keyAt(e.getX(i), e.getY(i)) ?: return
+                resizePointerId = e.getPointerId(i)
+                resizingKeyId = keyRect.prefKey
+                selectedKeyId = keyRect.prefKey
+                resizeStartX = e.getX(i)
+                resizeStartScale = keyWidthScale(keyRect.prefKey)
+                haptic()
+                invalidate()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val i = e.findPointerIndex(resizePointerId)
+                if (i < 0) return
+                val id = resizingKeyId ?: return
+                val keyRect = rects.firstOrNull { it.prefKey == id } ?: return
+                val dragUnits = (e.getX(i) - resizeStartX) / (unitW * keyRect.key.width.coerceAtLeast(1f))
+                val scale = (resizeStartScale + dragUnits).coerceIn(MIN_KEY_WIDTH_SCALE, MAX_KEY_WIDTH_SCALE)
+                if (kotlin.math.abs(scale - keyWidthScale(id)) >= 0.005f) {
+                    keyWidthScales[id] = scale
+                    computeLayout()
+                    invalidate()
+                }
+            }
+            MotionEvent.ACTION_UP -> finishLayoutResize(save = true)
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (e.getPointerId(e.actionIndex) == resizePointerId) finishLayoutResize(save = true)
+            }
+            MotionEvent.ACTION_CANCEL -> finishLayoutResize(save = true)
+        }
+    }
+
+    private fun finishLayoutResize(save: Boolean) {
+        val id = resizingKeyId
+        if (save && id != null) {
+            val scale = keyWidthScale(id)
+            val edit = prefs.edit()
+            if (kotlin.math.abs(scale - DEFAULT_KEY_WIDTH_SCALE) < 0.01f) {
+                keyWidthScales.remove(id)
+                edit.remove(id)
+            } else {
+                edit.putFloat(id, scale)
+            }
+            edit.apply()
+        }
+        resizePointerId = INVALID_POINTER_ID
+        resizingKeyId = null
+        invalidate()
+    }
+
+    private fun resetCustomKeyWidths() {
+        val edit = prefs.edit()
+        for ((row, keys) in Layout68.rows.withIndex()) {
+            for (column in keys.indices) edit.remove(widthPrefKey(row, column))
+        }
+        edit.apply()
+        keyWidthScales.clear()
+        selectedKeyId = null
+    }
+
+    private fun keyWidthScale(prefKey: String): Float = keyWidthScales.getOrPut(prefKey) {
+        prefs.getFloat(prefKey, DEFAULT_KEY_WIDTH_SCALE).coerceIn(MIN_KEY_WIDTH_SCALE, MAX_KEY_WIDTH_SCALE)
+    }
+
+    private fun widthPrefKey(row: Int, column: Int) = "$KEY_WIDTH_PREF_PREFIX${row}_$column"
+
+    private fun keyName(key: Key): String = key.label.ifEmpty { "空格" }
 
     // ---------- 键盘触控 ----------
 
@@ -480,6 +639,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     /** 释放全部按键（退后台、取消触控、切换模式时调用），防止电脑端卡键 */
     fun releaseAll() {
+        finishLayoutResize(save = true)
         cancelPendingChord(clearBits = true)
         for (pid in pointerKeys.keys.toList()) release(pid)
         pointerKeys.clear()
@@ -555,6 +715,12 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         private const val CHORD_DELAY_MS = 300L
         private const val DOUBLE_TAP_LOCK_MS = 280L
         private const val HIT_SLOP_DP = 3f   // 死区就近归属半径（间隙 4dp 时 3dp 恰好完全覆盖）
+        private const val ROW_WIDTH_UNITS = 16f
+        private const val DEFAULT_KEY_WIDTH_SCALE = 1f
+        private const val MIN_KEY_WIDTH_SCALE = 0.6f
+        private const val MAX_KEY_WIDTH_SCALE = 2.5f
+        private const val KEY_WIDTH_PREF_PREFIX = "key_width_"
+        private const val INVALID_POINTER_ID = -1
         private const val BTN_SHIFT = 1
         private const val BTN_IME = 2
         private const val BTN_PAD = 3
@@ -562,5 +728,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         private const val BTN_ONEHAND = 5
         private const val BTN_CHECK = 6
         private const val BTN_MODE = 7
+        private const val BTN_LAYOUT = 8
+        private const val BTN_LAYOUT_RESET = 9
     }
 }
