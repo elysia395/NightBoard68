@@ -14,8 +14,8 @@ android {
         minSdk = 28          // BluetoothHidDevice 需要 Android 9
         targetSdk = 34
         // 版本号与上游仓库对齐：上游 v1.2.1 = versionCode 4，v1.3.0 = 5，v1.3.1 = 6
-        versionCode = 6
-        versionName = "1.3.1"
+        versionCode = 7
+        versionName = "1.3.2"
     }
 
     // 仓库自带自签名密钥（signing/），克隆即可构建可安装的 release 包；

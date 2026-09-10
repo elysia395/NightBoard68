@@ -251,6 +251,8 @@ class HidKeyboard(
 
     fun modUp(bit: Int) = synchronized(lock) {
         heldMods = heldMods and bit.inv()
+        // 一次性锁存里若还挂着同一位（组合跨键保持后被抬起），一并清掉防止残留按住
+        oneShotMods = oneShotMods and bit.inv()
         sync()
     }
 
@@ -281,11 +283,12 @@ class HidKeyboard(
         sync()
     }
 
-    fun keyUp(code: Int) = synchronized(lock) {
+    /** keepOneShot：保持按下的修饰键位（修饰键手指仍按住、组合跨多次按键时由上层传入） */
+    fun keyUp(code: Int, keepOneShot: Int = 0) = synchronized(lock) {
         if (code <= 0) return
         val i = keys.indexOf(code)
         if (i >= 0) keys[i] = 0
-        oneShotMods = 0
+        oneShotMods = keepOneShot
         sync()
     }
 

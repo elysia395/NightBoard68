@@ -91,6 +91,10 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     private var pendingChordBits = 0
     private var pendingChordAction: Runnable? = null
 
+    // 锁存修饰键中已随按键真实发到电脑、待其手指抬起再放开的位：
+    // 手指仍按着的修饰键等同按住，组合跨多次按键（长按 Alt 连点 Tab 循环切窗）
+    private var realLatchBits = 0
+
     // 触控板（只统计落在触摸板区域的手指；手势逻辑在 TouchpadEngine，与横屏共用）
     private val pointerInPad = HashSet<Int>()
     private val tp = TouchpadEngine(this, hub, prefs).apply {
@@ -562,6 +566,9 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 when {
                     padRect.contains(x, y) -> {
                         pointerInPad.add(pid)
+                        // 触控板开始手势：换位长按判定一并取消（正在使用修饰键组合）
+                        for ((p, run) in modRowLongRun) removeCallbacks(run)
+                        modRowLongRun.clear()
                         tp.onPointerDown(pid, x, y, inScrollStrip = x >= padRect.right - dp(34f))
                     }
                     else -> press(pid, x, y)
@@ -722,6 +729,8 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         haptic()
 
         if (c.customSlot >= 0) {
+            // 开始使用自定义槽：取消其他手指挂着的修饰键长按换位判定
+            cancelOtherModRowLongPresses(pid)
             // 自定义槽：抬起时发组合键；按住 550ms 不动 = 打开编辑器
             pointerCustom[pid] = c.customSlot
             val run = Runnable {
@@ -745,6 +754,9 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         }
 
         val k = c.key!!
+        // 这个手指开始实际按键/锁存/组合：其他手指挂着的换位长按判定全部取消
+        // （按住 Alt 准备 Alt+Tab 时，不能在 550ms 后弹出换位对话框劫持组合）
+        cancelOtherModRowLongPresses(pid)
         when {
             k.isModifier && (modHold || k.modBit == Mods.LGUI) -> {
                 pointerHeldMods[pid] = k.modBit
@@ -814,7 +826,8 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             if (slot != null && !customLongFired.remove(pid)) {
                 // 快速点按：发送该槽的组合键
                 shortcuts.getOrNull(slot)?.let { fireShortcut(it) }
-                latchedMods.clear()
+                // 手指仍按着的锁存修饰键等同按住，不随快捷键消费
+                latchedMods.removeAll { it.modBit and fingerHeldLatchBits() == 0 }
             }
             invalidate()
             return
@@ -824,22 +837,33 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             k.isModifier && (modHold || k.modBit == Mods.LGUI) ->
                 pointerHeldMods.remove(pid)?.let { hub.modUp(it) }
             k.isModifier -> {
-                // 锁存型修饰键自身抬起：保持锁存，等下一个普通键来消费
-                // （点 Ctrl 锁定 → 点 A = Ctrl+A；再点 Ctrl = 单发切中英文）
+                // 锁存型修饰键自身抬起：
+                //  - 组合已发生（该位随按键真实发下）→ 现在放开 = 提交
+                //    （长按 Alt 连点 Tab 循环切窗：抬手那一刻电脑端 Alt 才抬起、窗口切换）
+                //  - 纯点按锁存（尚未发过键）→ 保持锁存，等下一个普通键来消费
+                if (k.modBit and realLatchBits != 0) {
+                    realLatchBits = realLatchBits and k.modBit.inv()
+                    hub.modUp(k.modBit)
+                    latchedMods.remove(k)
+                }
             }
-            // 普通键释放 = 消费锁存
+            // 普通键释放 = 消费锁存；修饰键手指仍按着的位等同按住，跨键保持
             else -> {
                 if (modRowLongPressDidFire) {
                     // 长按换位对话框已打开：这次按压不发键
                 } else if (c.modRowSlot >= 0 && (k.code == Hid.TAB || k.code == Hid.ESC)) {
                     // 延迟发送的 Tab/Esc：按下+抬起一次性发出（携带锁存的组合键）
                     val chord = modRowDeferredChord.remove(pid) ?: 0
+                    val keepBits = fingerHeldLatchBits()
                     hub.keyDown(k.code, latchedBits() or chord)
-                    hub.keyUp(k.code)
-                    latchedMods.clear()
+                    hub.keyUp(k.code, keepBits)
+                    realLatchBits = keepBits
+                    latchedMods.removeAll { it.modBit and keepBits == 0 }
                 } else {
-                    pointerSent.remove(pid)?.let { hub.keyUp(it) }
-                    latchedMods.clear()
+                    val keepBits = fingerHeldLatchBits()
+                    pointerSent.remove(pid)?.let { hub.keyUp(it, keepBits) }
+                    realLatchBits = keepBits
+                    latchedMods.removeAll { it.modBit and keepBits == 0 }
                 }
             }
         }
@@ -853,6 +877,25 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
 
     private fun latchedBits(): Int = latchedMods.fold(0) { acc, k -> acc or k.modBit }
 
+    /** 锁存的修饰键中，手指仍按在屏上的位（这类锁存等同按住：组合跨多次按键保持） */
+    private fun fingerHeldLatchBits(): Int {
+        var bits = 0
+        for (c in pointerCaps.values) {
+            val k = c.key ?: continue
+            if (k.isModifier && k in latchedMods) bits = bits or k.modBit
+        }
+        return bits
+    }
+
+    /** 其他手指还挂着的修饰键长按换位判定全部取消（本手指的不动） */
+    private fun cancelOtherModRowLongPresses(exceptPid: Int) {
+        val stale = modRowLongRun.filterKeys { it != exceptPid }
+        for ((p, run) in stale) {
+            removeCallbacks(run)
+            modRowLongRun.remove(p)
+        }
+    }
+
     private fun scheduleChord() {
         pendingChordAction?.let { removeCallbacks(it) }
         val action = Runnable {
@@ -860,6 +903,8 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             pendingChordBits = 0
             pendingChordAction = null
             if (bits != 0) hub.tapMods(bits)
+            // 脉冲会把已按住型锁存位一起抬起，同步真实位标记
+            realLatchBits = realLatchBits and bits.inv()
             latchedMods.clear()
             invalidate()
         }
@@ -888,6 +933,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         for (bit in pointerHeldMods.values) hub.modUp(bit)
         pointerHeldMods.clear()
         latchedMods.clear()
+        realLatchBits = 0
         lockedBits = 0
         hub.releaseAll()
         // 触摸板残余状态清空；拖动/点击中的鼠标键一并抬起
@@ -935,6 +981,10 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         val k = c.key!!
         if (k.isModifier && k.modBit != Mods.LGUI && k in latchedMods) {
             latchedMods.remove(k)               // 回滚 Ctrl/Alt 在按下瞬间的锁存
+            if (k.modBit and realLatchBits != 0) {
+                realLatchBits = realLatchBits and k.modBit.inv()
+                hub.modUp(k.modBit)             // 组合已发生的位一并回滚
+            }
         }
         cancelPendingChord(clearBits = true)
         // 回滚 Win 的按住（release 时 pointerHeldMods 已空，自动去重）

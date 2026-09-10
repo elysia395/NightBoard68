@@ -112,12 +112,17 @@ class InputHub(
         if (send { c -> c.sendKeyDown(code) }) oneShotModBits = latchedMods
     }
 
-    fun keyUp(code: Int) {
+    /**
+     * 抬起普通键。keepModBits：这些修饰键位保持按下不随键抬起——
+     * 修饰键手指仍按在屏上时组合应跨多次按键（长按 Alt 连点 Tab 循环切窗），
+     * 由 View 在修饰键手指抬起时再显式 modUp 提交。
+     */
+    fun keyUp(code: Int, keepModBits: Int = 0) {
         // 抬键时把可能带的一次性修饰键一起抬起（先键后修饰，顺序与 HID 报告一致）
-        send { c -> c.sendKeyUp(code) }
-        val bits = oneShotModBits
+        send { c -> c.sendKeyUp(code, keepModBits) }
+        val bits = oneShotModBits and keepModBits.inv()
         if (bits != 0) send { c -> c.sendModUp(bits) }
-        oneShotModBits = 0
+        oneShotModBits = oneShotModBits and keepModBits
     }
 
     /** 记录最近一次 keyDown 携带的修饰键，keyUp 时对应抬起 */
@@ -161,9 +166,9 @@ class InputHub(
         Channel.BLUETOOTH -> hidRun { keyDown(code, 0); true }
     }
 
-    private fun Channel.sendKeyUp(code: Int): Boolean = when (this) {
+    private fun Channel.sendKeyUp(code: Int, keepModBits: Int = 0): Boolean = when (this) {
         Channel.LAN -> lan.keyUp(code)
-        Channel.BLUETOOTH -> hidRun { keyUp(code); true }
+        Channel.BLUETOOTH -> hidRun { keyUp(code, keepModBits); true }
     }
 
     private fun Channel.sendMouseEvt(dx: Int, dy: Int, wheel: Int, buttons: Int): Boolean = when (this) {

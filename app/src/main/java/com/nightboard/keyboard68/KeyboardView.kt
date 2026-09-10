@@ -77,10 +77,16 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     private var lockedBits = 0
     private var lastShiftLatchAt = 0L
     private var fnLatched = false
+    /** 按住 Fn 期间打过字：抬指即结束 Fn 层（区分点按锁定与按住使用） */
+    private var fnHeldUsed = false
 
     // 修饰键组合（如 Ctrl+Shift 切输入法）：延迟发送，期间打字则取消
     private var pendingChordBits = 0
     private var pendingChordAction: Runnable? = null
+
+    // 锁存修饰键中已随按键真实发到电脑、待其手指抬起再放开的位：
+    // 手指仍按着的修饰键等同按住，组合跨多次按键（长按 Alt 连点 Tab 循环切窗）
+    private var realLatchBits = 0
 
     // 触控板模式
     private var touchMode = false
@@ -394,8 +400,8 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     private fun onStripButton(id: Int) {
         haptic()
         when (id) {
-            BTN_SHIFT -> hub.tapMods(Mods.LSHIFT)                  // 单发 Shift：切中英文
-            BTN_IME -> hub.tapMods(Mods.LCTRL or Mods.LSHIFT)      // Ctrl+Shift：切输入法
+            BTN_SHIFT -> hub.tapMods(shiftPulseBits(Mods.LSHIFT))          // 单发 Shift：切中英文
+            BTN_IME -> hub.tapMods(Mods.LCTRL or shiftPulseBits(Mods.LSHIFT))  // Ctrl+Shift：切输入法
             BTN_PAD -> {
                 touchMode = !touchMode
                 releaseAll()
@@ -557,7 +563,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                     }
                 }
             }
-            k.code == -1 -> fnLatched = !fnLatched
+            k.code == -1 -> {
+                fnLatched = !fnLatched
+                if (fnLatched) fnHeldUsed = false
+            }
             else -> {
                 val chordBits = pendingChordBits
                 cancelPendingChord(clearBits = false)
@@ -577,20 +586,56 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
             k.isModifier && (modHold || k.modBit == Mods.LGUI) ->
                 pointerHeldMods.remove(pid)?.let { hub.modUp(it) }
             k.isModifier -> {
-                // 锁存型修饰键自身抬起：保持锁存，等下一个普通键来消费
-                // （点 Ctrl 锁定 → 点 A = Ctrl+A；再点 Ctrl = 单发 Shift 类切换）
+                // 锁存型修饰键自身抬起：
+                //  - 组合已发生（该位随按键真实发下）→ 现在放开 = 提交
+                //    （长按 Alt 连点 Tab 循环切窗：抬手那一刻电脑端 Alt 才抬起、窗口切换）
+                //  - 纯点按锁存（尚未发过键）→ 保持锁存，等下一个普通键来消费
+                if (k.modBit and realLatchBits != 0) {
+                    realLatchBits = realLatchBits and k.modBit.inv()
+                    hub.modUp(k.modBit)
+                    latchedMods.remove(k)
+                }
             }
-            // 锁存型修饰键 / Fn：由下一次普通键释放消费
+            k.code == -1 -> {
+                // Fn 手指抬起：点按锁定保持（等下一个普通键消费）；
+                // 按住期间打过字则视为按住使用，抬指即结束 Fn 层
+                if (fnHeldUsed) {
+                    fnHeldUsed = false
+                    fnLatched = false
+                }
+            }
+            // 普通键释放 = 消费锁存；但修饰键手指仍按着的位等同按住，跨键保持
             else -> {
-                pointerSent.remove(pid)?.let { hub.keyUp(it) }
-                latchedMods.clear()
-                fnLatched = false
+                val keepBits = fingerHeldLatchBits()
+                pointerSent.remove(pid)?.let { hub.keyUp(it, keepBits) }
+                realLatchBits = keepBits
+                latchedMods.removeAll { it.modBit and keepBits == 0 }
+                if (fnFingerDown()) fnHeldUsed = true else fnLatched = false
             }
         }
         invalidate()
     }
 
     private fun latchedBits(): Int = latchedMods.fold(0) { acc, k -> acc or k.modBit }
+
+    /** 锁存的修饰键中，手指仍按在屏上的位（这类锁存等同按住：组合跨多次按键保持） */
+    private fun fingerHeldLatchBits(): Int {
+        var bits = 0
+        for (r in pointerKeys.values) {
+            val k = r.key
+            if (k.isModifier && k in latchedMods) bits = bits or k.modBit
+        }
+        return bits
+    }
+
+    private fun fnFingerDown(): Boolean = pointerKeys.values.any { it.key.code == -1 }
+
+    /**
+     * 条上按钮的 Shift 脉冲位：LSHIFT 被双击锁定时（真实按下中）换用 RSHIFT，
+     * 否则 tapMods 的 70ms 抬起会把大写锁定悄悄解除。
+     */
+    private fun shiftPulseBits(preferred: Int): Int =
+        if (preferred == Mods.LSHIFT && (lockedBits and Mods.LSHIFT) != 0) Mods.RSHIFT else preferred
 
     /**
      * 命中判定：先精确匹配键帽矩形（原区域行为 100% 不变）；
@@ -623,6 +668,8 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
             pendingChordBits = 0
             pendingChordAction = null
             if (bits != 0) hub.tapMods(bits)
+            // 脉冲会把已按住型锁存位一起抬起，同步真实位标记
+            realLatchBits = realLatchBits and bits.inv()
             latchedMods.clear()
             invalidate()
         }
@@ -647,8 +694,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         for (bit in pointerHeldMods.values) hub.modUp(bit)
         pointerHeldMods.clear()
         latchedMods.clear()
+        realLatchBits = 0
         lockedBits = 0
         fnLatched = false
+        fnHeldUsed = false
         hub.releaseAll()
         // 触摸板残余状态清空；拖动/点击中的鼠标键一并抬起
         tp.cancelAll(sendMouseUp = true)
