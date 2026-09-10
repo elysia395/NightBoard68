@@ -107,13 +107,19 @@ class HidKeyboard(
     private val callback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             this@HidKeyboard.registered = registered
-            if (registered) autoReconnect()
+            logConn(if (registered) "HID 服务注册成功" else "HID 服务注销")
+            if (registered) {
+                cancelReconnect()
+                autoReconnect()
+            }
             main.post { listener.onAppRegistered(registered) }
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             if (state == BluetoothProfile.STATE_CONNECTED) {
                 host = device
+                cancelReconnect()
+                logConn("电脑已连接：${safeName(device) ?: "未知设备"}")
                 try {
                     prefs.edit().putString("last_host_mac", device.address).apply()
                 } catch (_: SecurityException) {
@@ -121,6 +127,8 @@ class HidKeyboard(
                 main.post { listener.onHostChanged(safeName(device)) }
             } else if (host == device) {
                 host = null
+                logConn("电脑断开连接：${safeName(device) ?: "未知设备"}")
+                scheduleReconnect()
                 main.post { listener.onHostChanged(null) }
             }
         }
@@ -200,20 +208,77 @@ class HidKeyboard(
     /** 注册成功后自动回连上次连接过的电脑（设置里可关） */
     private fun autoReconnect() {
         if (!prefs.getBoolean("auto_reconnect", true)) return
-        val mac = prefs.getString("last_host_mac", null) ?: return
-        val a = adapter ?: return
+        connectBondedHost()
+    }
+
+    private fun connectBondedHost(): Boolean {
+        val mac = prefs.getString("last_host_mac", null) ?: return false
+        val a = adapter ?: return false
         val dev = try {
             a.getRemoteDevice(mac)
         } catch (_: IllegalArgumentException) {
-            return
+            return false
         }
-        try {
-            if (dev.bondState == BluetoothDevice.BOND_BONDED) {
-                hidDevice?.connect(dev)
-            }
+        return try {
+            if (dev.bondState == BluetoothDevice.BOND_BONDED) connectHost(dev) else false
         } catch (_: SecurityException) {
+            false
         }
     }
+
+    // ---------- 断连自动回连 ----------
+
+    /**
+     * 电脑侧断开后主动回连：Windows 对 HID 键盘有自动回连，但部分适配器会放弃，
+     * 手机侧按 3s/8s/20s/40s 递增间隔补几轮，期间任何一侧连上即停。
+     */
+    private var reconnectAttempts = 0
+    private val reconnectRun = Runnable { attemptReconnect() }
+
+    private fun cancelReconnect() {
+        main.removeCallbacks(reconnectRun)
+        reconnectAttempts = 0
+    }
+
+    private fun scheduleReconnect() {
+        if (!prefs.getBoolean("auto_reconnect", true)) return
+        if (reconnectAttempts >= RECONNECT_DELAYS_MS.size) {
+            logConn("自动回连放弃（已试 ${RECONNECT_DELAYS_MS.size} 次）；可点「检查」手动重连")
+            return
+        }
+        val delay = RECONNECT_DELAYS_MS[reconnectAttempts]
+        reconnectAttempts++
+        logConn("${delay / 1000}s 后自动回连（第 $reconnectAttempts 次）")
+        main.postDelayed(reconnectRun, delay)
+    }
+
+    private fun attemptReconnect() {
+        if (host != null) return
+        val a = adapter
+        if (a == null || !a.isEnabled) {
+            logConn("回连跳过：蓝牙未开启")
+        } else {
+            connectBondedHost()
+        }
+        scheduleReconnect()   // 连上了会被 cancelReconnect 清掉；没连上继续下一轮
+    }
+
+    // ---------- 连接事件日志（设置页可见，诊断蓝牙断连规律） ----------
+
+    private val connLog = ArrayDeque<String>()
+
+    private fun logConn(msg: String) {
+        val ts = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date())
+        synchronized(connLog) {
+            connLog.addLast("$ts  $msg")
+            while (connLog.size > CONN_LOG_LINES) connLog.removeFirst()
+        }
+        Log.i(TAG, msg)
+    }
+
+    /** 最近连接事件（设置页展示用） */
+    fun connLogLines(): List<String> = synchronized(connLog) { connLog.toList() }
 
     /**
      * 兼容注册：Android 13+ 直接调带 Executor 的版本；
@@ -343,5 +408,7 @@ class HidKeyboard(
         private const val TAG = "HidKeyboard"
         private const val REPORT_ID_KEYBOARD = 1
         private const val REPORT_ID_MOUSE = 2
+        private const val CONN_LOG_LINES = 30
+        private val RECONNECT_DELAYS_MS = longArrayOf(3000L, 8000L, 20000L, 40000L)
     }
 }

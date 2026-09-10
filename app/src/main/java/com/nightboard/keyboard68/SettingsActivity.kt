@@ -190,6 +190,20 @@ class SettingsActivity : Activity() {
         box.addView(hint("输完稍停半秒即自动保存并重连；Agent 首次运行如弹出防火墙提示请点允许。"))
         gap((10 * dp).toInt())
 
+        // ---------- 连接日志（诊断蓝牙断连） ----------
+        box.addView(title("连接日志"))
+        box.addView(hint("最近 30 条蓝牙连接事件。若经常断连，看这里的规律：断开发生在闲置时还是打字时、"
+            + "间隔多久、自动回连是否成功。设置 → 应用 → NightBoard68 → 电池，选择「无限制」可排除省电干预。"))
+        box.addView(TextView(this).apply {
+            textSize = 11f
+            setTextColor(Color.parseColor("#8A93A3"))
+            typeface = Typeface.MONOSPACE
+            text = (application as App).hid.connLogLines().joinToString("\n").ifEmpty { "（暂无事件）" }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).also { it.topMargin = (8 * dp).toInt() })
+        gap((10 * dp).toInt())
+
         box.addView(hint("所有修改立即保存，无需点确定。"))
     }
 
