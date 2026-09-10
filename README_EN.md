@@ -15,8 +15,19 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
-> **Current version: v1.3.0** (based on upstream v1.2.1, version numbering aligned
-> with this repository). What's new in v1.3.0:
+> **Current version: v1.3.1** (based on upstream v1.2.1, version numbering aligned
+> with this repository). What's new in v1.3.1 (vs v1.3.0):
+>
+> - **Custom key widths** (PR #7 by [@pjh-bit](https://github.com/pjh-bit)) —
+>   select and horizontally resize any key, in both landscape and portrait;
+>   widths are remembered per orientation, with Done / Reset controls.
+> - **Touchpad overhaul** — flick momentum scrolling, tap-tap-hold drag-select,
+>   two-finger pinch = Ctrl+wheel zoom, reordering of the portrait modifier row,
+>   and lower fast-drag latency; fixes the root cause of scrolling going dead
+>   after moving the cursor, plus cursor-freeze / dead drag-select / stray zoom.
+> - PC agent fixes: tap dead after reconnect, stuck mouse button on disconnect.
+>
+> What's new in v1.3.0:
 >
 > - **LAN mode** — connect over Wi-Fi for 2–10 ms latency (vs 15–40 ms over
 >   Bluetooth). Ships with `NightBoardAgent`, a portable 13 KB Windows exe
