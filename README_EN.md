@@ -15,8 +15,21 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
-> **Current version: v1.3.1** (based on upstream v1.2.1, version numbering aligned
-> with this repository). What's new in v1.3.1 (vs v1.3.0):
+> **Current version: v1.3.2** (based on upstream v1.2.1, version numbering aligned
+> with this repository). What's new in v1.3.2 (vs v1.3.1):
+>
+> - **Modifier/combo fixes** — hold Alt and tap Tab repeatedly to cycle through
+>   all background windows (held modifiers now persist across keystrokes and
+>   commit on finger lift); landscape Fn tap-latch works again; portrait
+>   reorder dialog no longer hijacks Alt-held combos; Caps Lock (double-Shift)
+>   survives the 中英/IME strip buttons.
+> - **Bluetooth stability** — phone-side auto-reconnect after host loss,
+>   lossless 10 ms coalescing of mouse reports on the Bluetooth channel,
+>   a battery-optimization exemption prompt, and a connection event log in
+>   Settings to diagnose disconnect patterns.
+> - New `CONTRIBUTING.md`; the `NightBoard68-mac` branch accepts PRs again.
+>
+> What's new in v1.3.1 (vs v1.3.0):
 >
 > - **Custom key widths** (PR #7 by [@pjh-bit](https://github.com/pjh-bit)) —
 >   select and horizontally resize any key, in both landscape and portrait;
