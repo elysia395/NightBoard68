@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.Executor
 
@@ -381,20 +382,65 @@ class HidKeyboard(
 
     private val mouseReport = ByteArray(4)
 
+    // 蓝牙通道鼠标报告合并：触摸屏采样率可达 120Hz+，快速拖动时逐事件直发会在
+    // HID 中断通道上形成小包洪峰（每条一次 Binder IPC + ACL 分组），链路拥挤时
+    // 与 WiFi 共存调度叠加可能诱发断连。位移/滚轮是相对量，窗口内合并发送完全
+    // 无损；按键是电平取最新值。按钮状态变化立即发出（点击不延迟）。
+    private var pendingMdx = 0
+    private var pendingMdy = 0
+    private var pendingMwheel = 0
+    private var pendingMbuttons = 0
+    private var lastMouseButtons = 0
+    private var lastMouseSentAt = 0L
+    private var mouseFlushPosted = false
+    private val mouseFlushRun = Runnable {
+        synchronized(lock) {
+            mouseFlushPosted = false
+            if (pendingMdx != 0 || pendingMdy != 0 || pendingMwheel != 0 ||
+                pendingMbuttons != lastMouseButtons
+            ) flushMouseNow()
+        }
+    }
+
     /** buttons: bit0 左键、bit1 右键；dx/dy/wheel: 相对位移，-127..127 */
     fun sendMouse(dx: Int, dy: Int, wheel: Int, buttons: Int) {
         synchronized(lock) {
-            val h = host ?: return
-            val d = hidDevice ?: return
-            mouseReport[0] = buttons.toByte()
-            mouseReport[1] = dx.coerceIn(-127, 127).toByte()
-            mouseReport[2] = dy.coerceIn(-127, 127).toByte()
-            mouseReport[3] = wheel.coerceIn(-127, 127).toByte()
-            try {
-                d.sendReport(h, REPORT_ID_MOUSE, mouseReport)
-            } catch (e: Exception) {
-                Log.w(TAG, "sendMouse 失败", e)
+            pendingMdx += dx
+            pendingMdy += dy
+            pendingMwheel += wheel
+            pendingMbuttons = buttons
+            val now = SystemClock.elapsedRealtime()
+            val needNow = buttons != lastMouseButtons ||
+                now - lastMouseSentAt >= MOUSE_COALESCE_MS ||
+                Math.abs(pendingMdx) + Math.abs(pendingMdy) > 120 ||
+                Math.abs(pendingMwheel) > 100   // 合并会溢出 ±127，提前冲销防丢位移
+            if (needNow) {
+                main.removeCallbacks(mouseFlushRun)
+                mouseFlushPosted = false
+                flushMouseNow(now)
+            } else if (!mouseFlushPosted) {
+                mouseFlushPosted = true
+                main.postDelayed(mouseFlushRun, Math.max(1L, lastMouseSentAt + MOUSE_COALESCE_MS - now))
             }
+        }
+    }
+
+    private fun flushMouseNow(now: Long = SystemClock.elapsedRealtime()) {
+        lastMouseSentAt = now
+        lastMouseButtons = pendingMbuttons
+        val dx = pendingMdx; val dy = pendingMdy
+        val wheel = pendingMwheel; val buttons = pendingMbuttons
+        pendingMdx = 0; pendingMdy = 0; pendingMwheel = 0
+        val h = host ?: return
+        val d = hidDevice ?: return
+        mouseReport[0] = buttons.toByte()
+        mouseReport[1] = dx.coerceIn(-127, 127).toByte()
+        mouseReport[2] = dy.coerceIn(-127, 127).toByte()
+        mouseReport[3] = wheel.coerceIn(-127, 127).toByte()
+        try {
+            d.sendReport(h, REPORT_ID_MOUSE, mouseReport)
+        } catch (e: Exception) {
+            Log.w(TAG, "sendMouse 失败", e)
         }
     }
 
@@ -410,5 +456,6 @@ class HidKeyboard(
         private const val REPORT_ID_MOUSE = 2
         private const val CONN_LOG_LINES = 30
         private val RECONNECT_DELAYS_MS = longArrayOf(3000L, 8000L, 20000L, 40000L)
+        private const val MOUSE_COALESCE_MS = 10L
     }
 }

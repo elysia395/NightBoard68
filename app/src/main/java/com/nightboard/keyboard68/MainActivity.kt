@@ -33,6 +33,7 @@ class MainActivity : Activity(), App.HidUi {
     private lateinit var deviceBox: LinearLayout
     private lateinit var enableBt: Button
     private lateinit var discoverBt: Button
+    private lateinit var batteryBtn: Button
 
     private val app get() = application as App
     private val dp get() = resources.displayMetrics.density
@@ -135,6 +136,22 @@ class MainActivity : Activity(), App.HidUi {
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+        // 电池优化豁免：部分 ROM 会杀掉前台服务所属进程，HID 注册随之重建，
+        // 用户感知为蓝牙频繁断连。豁免后进程受保护（连接日志里表现为成对的注册/注销事件消失）。
+        batteryBtn = Button(this).apply {
+            text = "⚡ 申请电池优化豁免（防后台被杀导致断连）"
+            visibility = ViewGroup.GONE
+            setOnClickListener {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName"))
+                )
+            }
+        }
+        box.addView(batteryBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
         box.addView(Button(this).apply {
             text = "⚙ 设置（震动 / 亮度 / 局域网）"
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
@@ -197,6 +214,13 @@ class MainActivity : Activity(), App.HidUi {
         Build.VERSION.SDK_INT < 31 ||
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
+    private fun batteryOptimizationIgnored(): Boolean = try {
+        (getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager)
+            .isIgnoringBatteryOptimizations(packageName)
+    } catch (_: Exception) {
+        true
+    }
+
     private fun ensurePermissionThenHid() {
         val perms = buildList {
             if (Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -213,6 +237,13 @@ class MainActivity : Activity(), App.HidUi {
     }
 
     private fun refresh() {
+        // 电池优化豁免按钮：未豁免时显示
+        batteryBtn.visibility = if (Build.VERSION.SDK_INT >= 23 && !batteryOptimizationIgnored()) {
+            ViewGroup.VISIBLE
+        } else {
+            ViewGroup.GONE
+        }
+
         // 模式按钮高亮 + 模式说明
         val activeBg = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(accent) }
         val normalBg = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(Color.parseColor("#1C232D")) }
