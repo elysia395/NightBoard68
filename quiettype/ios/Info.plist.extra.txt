@@ -1,0 +1,9 @@
+把下面两段加入 Xcode 工程的 Info.plist(可用 Property List 编辑器加,或右键 “Open As → Source Code” 直接粘贴到 <dict> 内):
+
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>QuietType 需要访问局域网,才能把输入发送到同一 Wi-Fi 下的 Windows 电脑。</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
