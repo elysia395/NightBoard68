@@ -1,0 +1,104 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --card: #1f2430;
+  --line: #2a3040;
+  --txt: #e8eaf0;
+  --sub: #9aa3b2;
+  --acc: #4f8cff;
+  --acc2: #39c07a;
+  --danger: #ff6b6b;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--txt);
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  display: flex; flex-direction: column;
+  overscroll-behavior: none;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 6px; gap: 8px; flex-wrap: wrap;
+}
+/* 扫码面板:只在非触屏(电脑)显示,手机上用 CSS 隐藏 */
+.qrpane {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 12px 8px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+}
+.qrpane img { width: 118px; height: 118px; background: #fff; border-radius: 8px; flex: none; }
+.qrtext { flex: 1; font-size: 12px; color: var(--sub); line-height: 1.6; }
+.mono { font-family: Consolas, monospace; color: var(--txt); word-break: break-all; }
+@media (hover: none), (pointer: coarse) {
+  .qrpane { display: none; }
+}
+/* 公网中继模式的电脑选择条 */
+.relaybar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 12px 8px; padding: 8px 12px;
+  background: #232b3a; border: 1px solid var(--line); border-radius: 12px;
+  font-size: 13px;
+}
+.relaybar select, .relaybar input {
+  background: var(--panel); color: var(--txt);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 13px;
+}
+.relaybar input { width: 110px; }
+.relaybar .hint { width: 100%; color: var(--sub); font-size: 11px; }
+.hidden { display: none !important; }
+.tabs { display: flex; gap: 6px; }
+.tab {
+  background: var(--card); color: var(--sub); border: 1px solid var(--line);
+  border-radius: 12px; padding: 8px 14px; font-size: 15px;
+}
+.tab.active { color: #fff; border-color: var(--acc); background: rgba(79,140,255,.18); }
+.status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--sub); }
+.dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot.ok { background: var(--acc2); box-shadow: 0 0 6px var(--acc2); }
+.dot.off { background: var(--danger); }
+.mini {
+  background: var(--card); color: var(--txt); border: 1px solid var(--line);
+  border-radius: 8px; font-size: 12px; padding: 4px 8px;
+}
+.panel { flex: 1; display: flex; flex-direction: column; padding: 6px 12px; gap: 8px; min-height: 0; }
+.panel.hidden { display: none; }
+
+#mirror {
+  flex: 1; min-height: 120px; resize: none;
+  background: var(--panel); color: var(--txt);
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px; font-size: 18px; line-height: 1.5;
+  outline: none; touch-action: manipulation;
+}
+#mirror:focus { border-color: var(--acc); }
+.hint, .legend { font-size: 11px; color: var(--sub); line-height: 1.5; }
+
+.keyrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.k {
+  flex: 1; min-width: 0;
+  background: var(--card); color: var(--txt);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 4px; font-size: 14px; white-space: nowrap;
+}
+.k:active { background: var(--acc); border-color: var(--acc); color: #fff; }
+.k.direct { background: #232a3a; }
+.k.combo { background: #243020; border-color: #2c4a33; color: #bfe8c9; }
+.k.wide { flex: 1 1 45%; }
+.k.tap-now { background: var(--acc); color:#fff; }
+
+/* 触控板 */
+.pad {
+  flex: 1; min-height: 260px;
+  background: radial-gradient(120% 100% at 50% 0%, #1c2230, #141821);
+  border: 1px solid var(--line); border-radius: 16px;
+  touch-action: none; position: relative; overflow: hidden;
+}
+.pad-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--sub); font-size: 14px; text-align: center; line-height: 1.8;
+  pointer-events: none;
+}
+.sens { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--sub); }
+.sens input { flex: 1; }

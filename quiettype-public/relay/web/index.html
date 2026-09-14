@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="QuietType">
+<title>QuietType</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="tabs">
+      <button id="tab-key" class="tab active">⌨️ 键盘</button>
+      <button id="tab-mouse" class="tab">🖱️ 触控板</button>
+    </div>
+    <div class="status">
+      <span id="dot" class="dot off"></span><span id="status-text">连接中…</span>
+      <button id="btn-paste" class="mini">文本:逐字</button>
+      <button id="btn-sync" class="mini">镜像同步</button>
+    </div>
+  </header>
+
+  <div id="qrpane" class="qrpane">
+    <img id="qr-img" src="/qr.svg" alt="二维码">
+    <div class="qrtext">
+      <b>电脑上看到此页时:</b>用 iPhone 相机扫左侧二维码直达本机连接页(或手动打开 <span id="qr-url" class="mono"></span>)<br>
+      手机端已在此页则无需再扫。
+    </div>
+    <button id="qr-close" class="mini">关闭</button>
+  </div>
+
+  <div id="relaybar" class="relaybar hidden">
+    <label for="relay-agent">电脑</label>
+    <select id="relay-agent"></select>
+    <input id="relay-pin" type="password" placeholder="口令(电脑黑窗口里显示)" autocomplete="off">
+    <button id="relay-refresh" class="mini">刷新列表</button>
+    <span class="hint">公网中继模式:选择自己的电脑并输入它的口令,手机任何网络都能连</span>
+  </div>
+
+  <!-- 键盘面板 -->
+  <section id="panel-key" class="panel">
+    <textarea id="mirror" autocomplete="off" autocapitalize="off" autocorrect="off"
+      spellcheck="false" placeholder="在这里打字,内容会实时敲进电脑(可加主屏幕当 App 用)"></textarea>
+    <div class="hint">电脑端文本若被改动(如撤销/切换窗口),先点上方「镜像同步」再继续。</div>
+
+    <div class="keyrow">
+      <button data-key="tab" class="k">⇥ Tab</button>
+      <button data-key="esc" class="k">⎋ Esc</button>
+      <button data-key="enter" class="k direct">⏎ 回车</button>
+      <button data-key="backspace" class="k direct">⌫ 删除</button>
+      <button data-key="delete" class="k direct">Del</button>
+    </div>
+    <div class="keyrow">
+      <button data-key="home" class="k direct">↖ Home</button>
+      <button data-key="up" class="k direct">↑</button>
+      <button data-key="end" class="k direct">↘ End</button>
+      <button data-key="space" class="k direct">空格</button>
+    </div>
+    <div class="keyrow">
+      <button data-key="left" class="k direct">←</button>
+      <button data-key="down" class="k direct">↓</button>
+      <button data-key="right" class="k direct">→</button>
+      <button data-key="pgup" class="k direct">⇞ PgUp</button>
+      <button data-key="pgdn" class="k direct">⇟ PgDn</button>
+    </div>
+    <div class="keyrow">
+      <button data-combo="z" class="k combo">↶ 撤销</button>
+      <button data-combo="y" class="k combo">↷ 重做</button>
+      <button data-combo="a" class="k combo">全选</button>
+      <button data-combo="s" class="k combo">保存</button>
+    </div>
+    <div class="keyrow">
+      <button data-combo="c" class="k combo">复制</button>
+      <button data-combo="x" class="k combo">剪切</button>
+      <button data-combo="v" class="k combo">粘贴</button>
+    </div>
+    <div class="legend">说明:「⇥/⎋/方向键」为直发键,不经过镜像文本框;</div>
+  </section>
+
+  <!-- 触控板面板 -->
+  <section id="panel-mouse" class="panel hidden">
+    <div id="pad" class="pad">
+      <div class="pad-hint">单指滑动=移动 · 轻点=左键<br>双指轻点=右键 · 双指上下滑=滚轮</div>
+    </div>
+    <div class="keyrow">
+      <button id="btn-left" class="k wide">左键</button>
+      <button id="btn-right" class="k wide">右键</button>
+      <button data-wheel="1" class="k wide">滚轮上</button>
+      <button data-wheel="-1" class="k wide">滚轮下</button>
+    </div>
+    <div class="sens">
+      <label>灵敏度 <span id="sens-val">2.5</span></label>
+      <input id="sens" type="range" min="0.5" max="8" step="0.5" value="2.5">
+    </div>
+  </section>
+
+<script src="app.js"></script>
+</body>
+</html>

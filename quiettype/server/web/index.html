@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="QuietType">
+<title>QuietType</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="bgLayer"></div>
+  <div id="bgDim"></div>
+
+  <header>
+    <div class="status">
+      <span id="dot" class="dot off"></span><span id="status-text">连接中…</span>
+    </div>
+    <div class="tools">
+      <span class="seg" id="segOrient">
+        <button class="mini on" data-orient="auto">自动</button>
+        <button class="mini" data-orient="portrait">竖屏</button>
+        <button class="mini" data-orient="landscape">横屏</button>
+      </span>
+      <button id="btn-zh" class="mini">中文输入</button>
+      <button id="btn-paste" class="mini">文本:逐字</button>
+      <button id="btn-sync" class="mini">镜像同步</button>
+      <button id="btn-gear" class="mini">⚙ 设置</button>
+    </div>
+  </header>
+
+  <!-- 中文输入条:竖屏/横屏共用 -->
+  <div id="zhBar" class="hidden">
+    <input id="zhInput" placeholder="用手机输入法打中文,实时送进电脑" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="tip">这是手机输入法输入区:拼音/手写/语音都行,内容实时进电脑。再点一次「中文输入」关闭。</div>
+  </div>
+
+  <div id="relaybar" class="relaybar hidden">
+    <label>电脑</label>
+    <select id="relay-agent"></select>
+    <input id="relay-pin" type="password" placeholder="口令" autocomplete="off">
+    <button id="relay-refresh" class="mini">刷新</button>
+    <span class="hint">公网中继模式:选择自己的电脑并输入它的口令</span>
+  </div>
+
+  <!-- ================= 竖屏(占满屏幕,无留白) ================= -->
+  <section id="layout-portrait" class="layout">
+    <div class="line" id="statusP">点 Ctrl/Alt/Tab/Win 锁定后,再按键即成组合键</div>
+
+    <div class="pad" id="padP">
+      <div class="hint">单指滑=移动 · 轻点=左键 · 长按=右键<br>双指滑=滚动 · 右缘条=滚动</div>
+      <div class="toast" id="toastP"></div>
+      <div class="strip" id="stripP">滚<br>动</div>
+    </div>
+
+    <div class="row">
+      <button class="k mod" data-sticky="ctrl">Ctrl</button>
+      <button class="k mod" data-sticky="alt">Alt</button>
+      <button class="k mod" data-sticky="tab">Tab</button>
+      <button class="k mod" data-sticky="win">Win</button>
+      <button class="k mod" data-sticky="esc">Esc</button>
+    </div>
+    <div class="row">
+      <button class="k slot" data-slot="0">Ctrl+C</button>
+      <button class="k slot" data-slot="1">Ctrl+V</button>
+      <button class="k slot" data-slot="2">Ctrl+S</button>
+      <button class="k slot" data-slot="3">Ctrl+Z</button>
+      <button class="k slot" data-slot="4">Ctrl+Shift+T</button>
+      <button class="k slot" data-slot="5">Alt+F4</button>
+    </div>
+
+    <div class="symrow" id="symRow"></div>
+
+    <div class="row" id="fRow"></div>
+    <div class="row" id="numRow"></div>
+
+    <div class="row" id="q1"></div>
+    <div class="row" id="q2"></div>
+    <div class="row" id="q3"></div>
+    <div class="row" id="q4">
+      <button class="k mod" style="flex:1.3">Ctrl</button>
+      <button class="k langbtn on" id="btnEN" style="flex:1.6">英文</button>
+      <button class="k langbtn" id="btnZH" style="flex:1.6">中文</button>
+      <button class="k" style="flex:2.2;font-size:14px" data-key="space">空格</button>
+      <button class="k mod" style="flex:1.3" data-key="enter">⏎</button>
+    </div>
+  </section>
+
+  <!-- ================= 横屏(68 键) ================= -->
+  <section id="layout-landscape" class="layout hidden">
+    <div class="line" id="statusL">68 键布局:按住 Fn,数字行会变成 F1–F12(⌫ 变 Del)</div>
+    <div class="kbd" id="kbdLand"></div>
+    <button class="ball" id="ball">🖱</button>
+    <div class="padDrawer hidden" id="padDrawer">
+      <button class="mini" id="padClose" style="align-self:flex-end">收起 ✕</button>
+      <div class="pad" id="padL">
+        <div class="hint">触摸板(横屏)</div>
+        <div class="toast" id="toastL"></div>
+      </div>
+      <button class="mini" id="btnLandZH">中文输入(手机输入法)</button>
+    </div>
+  </section>
+
+  <!-- ================= 设置面板 ================= -->
+  <section id="settings" class="settings hidden">
+    <h2>设置 <button class="mini" id="btn-close-set" style="float:right">关闭 ✕</button></h2>
+
+    <div class="setting">
+      <h3>外观 / 界面(背景与配色,立即生效并记住)</h3>
+      <div class="desc">背景二选一:<b>纯色</b>(色盘自选)或<b>上传自己的照片</b>(手机上点上传会打开相册)。</div>
+      <div class="radio" style="margin-bottom:8px">
+        <label><input type="radio" name="bgtype" value="color" checked> 纯色</label>
+        <label><input type="radio" name="bgtype" value="photo"> 我的照片</label>
+      </div>
+      <div id="bgColorBox">
+        <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="val">背景色</span><input type="color" id="bgColor" value="#0f1115" style="width:60px;height:34px;flex:none">
+          <span class="val">键面色</span><input type="color" id="cardColor" value="#1f2430" style="width:60px;height:34px;flex:none">
+        </div>
+        <div class="desc" style="margin:8px 0 4px">预设配色:</div>
+        <div class="row" id="presets" style="gap:6px;flex-wrap:wrap"></div>
+      </div>
+      <div id="bgPhotoBox" class="hidden">
+        <input type="file" id="bgFile" accept="image/*" style="font-size:12px">
+        <div style="margin-top:8px;font-size:12px">背景模糊 <input type="range" id="blurR" min="0" max="20" step="1" value="0"><span class="val" id="blurV">0px</span></div>
+        <div style="font-size:12px">背景变暗 <input type="range" id="dimR" min="0" max="80" step="5" value="35"><span class="val" id="dimV">35%</span></div>
+        <div class="desc" id="photoTip" style="margin-top:6px">还没有选择照片。</div>
+      </div>
+      <button class="mini" id="resetUI" style="margin-top:10px">恢复默认外观</button>
+    </div>
+
+    <div class="setting">
+      <h3>锁定键行为</h3>
+      <div class="desc">Ctrl / Alt / Tab / Win / Esc 点一下之后怎么表现。</div>
+      <div class="radio">
+        <label><input type="radio" name="lockmode" value="hold" checked> 保持按下(再点一次才松开)</label>
+        <label><input type="radio" name="lockmode" value="once"> 只对下一个按键生效</label>
+      </div>
+    </div>
+
+    <div class="setting">
+      <h3>触摸板滚动灵敏度</h3>
+      <div class="desc">双指滑 / 右缘条滑同样距离滚多少。<span class="val" id="scrollV">2.5</span></div>
+      <input type="range" id="scrollR" min="0.5" max="8" step="0.5" value="2.5">
+    </div>
+
+    <div class="setting">
+      <h3>触摸板移动灵敏度</h3>
+      <div class="desc">单指滑动时鼠标移动的放大倍数。<span class="val" id="moveV">2.5</span></div>
+      <input type="range" id="moveR" min="0.5" max="8" step="0.5" value="2.5">
+    </div>
+
+    <div class="setting">
+      <h3>长按判定时间</h3>
+      <div class="desc">按住多久算"长按右键"(触摸板)或"编辑槽位"(快捷键区)。<span class="val" id="holdV">600</span> ms</div>
+      <input type="range" id="holdR" min="300" max="1200" step="100" value="600">
+    </div>
+
+    <div class="setting">
+      <h3>按键震动反馈</h3>
+      <div class="desc">点键时手机轻震一下(安卓浏览器支持)。<span class="val" id="vibV">10</span> ms</div>
+      <input type="range" id="vibR" min="0" max="30" step="5" value="10">
+    </div>
+  </section>
+
+<script src="app.js"></script>
+</body>
+</html>
