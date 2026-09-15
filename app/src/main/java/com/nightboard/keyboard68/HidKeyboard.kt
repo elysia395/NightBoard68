@@ -375,6 +375,9 @@ class HidKeyboard(
     private val keys = IntArray(6)
     /** 报告状态与电脑端可能不一致（发送失败/连接未就绪），需在连接恢复后补发 */
     private var dirty = false
+    /** 上次成功发送的时刻（uptimeMillis）。检测「假连接」：链路半挂起时 sendReport
+     *  不抛异常也不会触发断连回调，此时 keyDown 前主动补发一次对齐，堵住卡键连发墙角 */
+    private var lastOkSyncAt = 0L
 
     fun modDown(bit: Int) = synchronized(lock) {
         heldMods = heldMods or bit
@@ -407,6 +410,14 @@ class HidKeyboard(
 
     fun keyDown(code: Int, latchedMods: Int) = synchronized(lock) {
         if (code <= 0) return
+        // 假连接兜底：距上次成功发送太久（期间无交互），发送前先补发一次当前状态对齐电脑端。
+        // 覆盖「链路半挂起、sendReport 不抛异常、断连回调也不来」时 keyUp 未送达的卡键连发；
+        // 发送失败会进 dirty，靠重连补发；成功则对齐，两路兜底互通。
+        if (!dirty && host != null && hidDevice != null &&
+            SystemClock.uptimeMillis() - lastOkSyncAt > RESYNC_IDLE_MS
+        ) {
+            sync()
+        }
         oneShotMods = latchedMods
         if (keys.indexOf(code) < 0) {
             val slot = keys.indexOf(0)
@@ -447,6 +458,7 @@ class HidKeyboard(
         try {
             d.sendReport(h, REPORT_ID_KEYBOARD, report)
             dirty = false
+            lastOkSyncAt = SystemClock.uptimeMillis()
         } catch (e: Exception) {
             Log.w(TAG, "sendReport 失败", e)
             dirty = true
@@ -532,6 +544,9 @@ class HidKeyboard(
         private const val CONN_LOG_LINES = 30
         private val RECONNECT_DELAYS_MS = longArrayOf(3000L, 8000L, 20000L, 40000L)
         private const val MOUSE_COALESCE_MS = 10L
+        /** 距上次成功发送超过该时长（无交互）时，keyDown 前先补发一次状态对齐电脑端，
+         *  兜底「假连接」（链路半挂起、不抛异常也不断连）导致的卡键连发 */
+        private const val RESYNC_IDLE_MS = 3000L
         private const val WAKE_CONNECT_THROTTLE_MS = 5000L
     }
 }

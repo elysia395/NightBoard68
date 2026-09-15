@@ -612,6 +612,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 editing -> colorKeyLatched
                 pressed -> colorKeyPressed
                 latched -> colorKeyLatched
+                capsLit -> colorKeyLatched
                 fnLit -> colorKeyLatched
                 isLetter -> colorLetter
                 else -> colorKey
@@ -893,25 +894,44 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         canvas.drawRoundRect(numpadBodyRect, radius, radius, paintStroke)
         // 键格
         val keyRadius = radius * 0.7f
+        // 修改模式（NumLock 关，已确认）：带 altLabel 的键像 Fn 层那样整体切换键帽并高亮。
+        // 主机权威：ledKnown=false（未知）时保持数字，不猜测。
+        val altMode = hub.ledKnown && !hub.numOn
+        // NumLock 开（确认）：Num 键点亮，指示当前为数字模式
+        val numLit = hub.ledKnown && hub.numOn
         for (nk in numpadKeys) {
             val pressed = numpadPointerKey.containsValue(nk)
-            paintFill.color = if (pressed) colorKeyPressed else colorKey
+            val isNumKey = nk.cell.code == Hid.NUM_LOCK
+            val isAlt = altMode && nk.cell.altLabel.isNotEmpty()
+            paintFill.color = when {
+                pressed -> colorKeyPressed
+                isAlt || (isNumKey && numLit) -> colorKeyLatched
+                else -> colorKey
+            }
             canvas.drawRoundRect(nk.rect, keyRadius, keyRadius, paintFill)
-            paintText.color = colorText
+            if (isAlt || (isNumKey && numLit)) {
+                paintStroke.color = colorAccent
+                canvas.drawRoundRect(nk.rect, keyRadius, keyRadius, paintStroke)
+            }
+            // 主标签：修改模式下切换为 altLabel（像 Fn）；NumLock 开时 Num 键文字为主色
+            val shownLabel = if (isAlt) nk.cell.altLabel else nk.cell.label
+            paintText.color = when {
+                isAlt || (isNumKey && numLit) -> colorAccent
+                else -> colorText
+            }
             paintText.textSize = dp(14f)
             val fm = paintText.fontMetrics
             canvas.drawText(
-                nk.cell.label,
+                shownLabel,
                 nk.rect.centerX(),
                 nk.rect.centerY() - (fm.ascent + fm.descent) / 2f,
                 paintText,
             )
-            // 右上角标注：NumLock 关闭时的操作（Home/↑/PgUp…）
-            // 主机权威：只有收到 LED 且确认 NumLock 关才橙色高亮；未知/NumLock 开 = 灰色常驻
-            if (nk.cell.altLabel.isNotEmpty()) {
-                val altActive = hub.ledKnown && !hub.numOn
-                paintText.color = if (altActive) colorAccent else Color.parseColor("#5A6474")
-                paintText.textSize = if (altActive) dp(9f) else dp(8f)
+            // 右上角标注（仅数字模式/未知时）：提示 NumLock 关闭后的操作
+            // 修改模式下键帽已切换为对应按键，不再重复标注；主机权威：只有确认关才橙色
+            if (nk.cell.altLabel.isNotEmpty() && !isAlt) {
+                paintText.color = if (altMode) colorAccent else Color.parseColor("#5A6474")
+                paintText.textSize = if (altMode) dp(9f) else dp(8f)
                 paintText.textAlign = Paint.Align.RIGHT
                 canvas.drawText(nk.cell.altLabel, nk.rect.right - dp(4f), nk.rect.top + dp(10f), paintText)
                 paintText.textAlign = Paint.Align.CENTER

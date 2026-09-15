@@ -63,8 +63,12 @@ class LanKeyboard(
     @Volatile private var running = false
     private var loopThread: Thread? = null
     private var heartThread: Thread? = null
+    /** 连接代号：每次建立新连接自增；旧 writer/心跳线程据此自灭，防止重连过快时新旧线程共用状态互相干扰 */
+    @Volatile private var connGen = 0
 
     private val outLock = Any()
+    /** 实际写 socket 的互斥锁：writer 线程（写输入事件）与心跳线程（直写 ping）共用，避免字节交错 */
+    private val writeLock = Any()
     private var out: OutputStream? = null
     private var socket: Socket? = null
 
@@ -72,8 +76,12 @@ class LanKeyboard(
      * 发送队列：键盘/触摸事件在主线程产生，Android 禁止主线程做网络 I/O
      * （NetworkOnMainThreadException），所以 socket 写全部交给专用 writer
      * 线程；单队列 FIFO 保证「修饰键先落、主键后落」的顺序不乱。
+     *
+     * 注意：容量必须足够吸收触控板刷屏（12ms 一次、滚轮惯性可连续几十条），
+     * 否则满队列会静默丢弃输入事件，点击失效；心跳 ping 不走本队列（直写），
+     * 避免被输入事件挤掉导致误判断线。
      */
-    private val sendQueue = LinkedBlockingQueue<String>(512)
+    private val sendQueue = LinkedBlockingQueue<String>(2048)
 
     /** 心跳状态：pingId 自增，pingAt = 发出时刻，由读取线程回填 RTT */
     @Volatile private var pingId = 0
@@ -244,10 +252,12 @@ class LanKeyboard(
             agentName = agent.name
             pongSeen = true
             rttMs = -1
+            misses = 0
+            val gen = ++connGen   // 使旧连接的 writer/心跳线程立刻过期
             setState(State.CONNECTED)
             sendLine(JSONObject().put("t", "hello").put("v", 1).put("n", deviceName()).toString())
-            startWriter()
-            startHeartbeat()
+            startWriter(gen)
+            startHeartbeat(gen)
             readLoop(sock)
         }
     }
@@ -257,10 +267,10 @@ class LanKeyboard(
      * 只认自己连接那次的 OutputStream（localOut），断线/换线后自动退出，
      * 避免老 writer 把新连接的写入顺序搅乱。
      */
-    private fun startWriter() {
+    private fun startWriter(gen: Int) {
         Thread({
             val localOut = synchronized(outLock) { out } ?: return@Thread
-            while (running && state == State.CONNECTED) {
+            while (running && state == State.CONNECTED && gen == connGen) {
                 val line = try {
                     sendQueue.poll(1000, TimeUnit.MILLISECONDS)
                 } catch (_: InterruptedException) {
@@ -270,8 +280,10 @@ class LanKeyboard(
                 val o = synchronized(outLock) { out }
                 if (o == null || o !== localOut) break
                 try {
-                    o.write((line + "\n").toByteArray(Charsets.UTF_8))
-                    o.flush()
+                    synchronized(writeLock) {
+                        o.write((line + "\n").toByteArray(Charsets.UTF_8))
+                        o.flush()
+                    }
                 } catch (_: Exception) {
                     Log("发送失败，断开重连")
                     closeSocket()
@@ -329,9 +341,9 @@ class LanKeyboard(
         }
     }
 
-    private fun startHeartbeat() {
+    private fun startHeartbeat(gen: Int) {
         heartThread = Thread({
-            while (running && state == State.CONNECTED) {
+            while (running && state == State.CONNECTED && gen == connGen) {
                 try {
                     if (!pongSeen) {
                         // 上一个 ping 没回：连续丢 3 次判定断线
@@ -347,7 +359,13 @@ class LanKeyboard(
                     pingId++
                     pongSeen = false
                     pingAt = System.currentTimeMillis()
-                    sendLine(JSONObject().put("t", "p").put("i", pingId).toString())
+                    // ping 直写 socket（不占输入队列）：触控板刷屏时输入队列可能打满，
+                    // 若 ping 走队列会被挤掉 → 误判断线反复重连
+                    if (!writeDirect(JSONObject().put("t", "p").put("i", pingId).toString())) {
+                        Log("心跳发送失败，断开重连")
+                        closeSocket()
+                        return@Thread
+                    }
                 } catch (_: Exception) {
                     closeSocket()
                     return@Thread
@@ -359,6 +377,20 @@ class LanKeyboard(
                 }
             }
         }, "nb68-lan-heart").apply { isDaemon = true; start() }
+    }
+
+    /** 控制报文直写：与 writer 线程共用 writeLock，避免字节交错 */
+    private fun writeDirect(json: String): Boolean {
+        val o = synchronized(outLock) { out } ?: return false
+        try {
+            synchronized(writeLock) {
+                o.write((json + "\n").toByteArray(Charsets.UTF_8))
+                o.flush()
+            }
+            return true
+        } catch (_: Exception) {
+            return false
+        }
     }
 
     private var misses = 0
