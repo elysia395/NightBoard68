@@ -15,9 +15,20 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
-> **Current version: v1.4.0** (based on upstream v1.2.1, version numbering aligned
-> with this repository). What's new in v1.4.0 (vs v1.3.2), by community contributor
-> [@TeaClearInkII](https://github.com/TeaClearInkII) (PR #10):
+> **Current version: v1.4.1** (based on upstream v1.2.1, version numbering aligned
+> with this repository). What's new in v1.4.1 (vs v1.4.0), by
+> [@TeaClearInkII](https://github.com/TeaClearInkII) (PR #12/#13, see
+> [FIXLOG.md](FIXLOG.md) — **update NightBoardAgent.exe together with the APK**):
+>
+> - Bluetooth: first-keypress stuck-repeat after resume is fixed (dirty-flag +
+>   resync on reconnect, plus idle-resync for silently suspended links).
+> - LAN: arrow keys no longer type 8/2/4/6 (editing keys now injected via VK,
+>   NumLock-independent); random false disconnects and dead touchpad clicks fixed
+>   (heartbeat no longer fights the input queue); middle mouse button supported.
+> - NumLock/ScrollLock LED feedback; numpad "modify mode" keycaps; clearer
+>   admin-rights (UIPI) hint in the agent.
+>
+> What's new in v1.4.0 (vs v1.3.2):
 >
 > - **Numpad** — a real 4×5 keypad with Keypad-page HID codes, resizable floating
 >   layout, and NumLock-off hints driven by host LED state.
