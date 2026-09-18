@@ -87,6 +87,24 @@ F1~F12 → 数字行 → 手机式 26 键**。
 </details>
 
 <details>
+<summary><b>exe 双击被拦：提示「应用程序控制策略已阻止此文件」？</b></summary>
+
+这是 Windows 11 的**智能应用控制（Smart App Control）**在拦截**未签名**的程序
+（Agent 目前没有代码签名证书），与文件损坏无关。放行依赖信誉积累，所以表现
+时好时坏：新下载的首次启动被拦，过一阵子同一文件可能就能正常运行——遇到时
+过段时间重试即可。自行用 `build.bat` 编译出的同样是未签名程序，也可能被拦。
+</details>
+
+<details>
+<summary><b>下载了源码 zip，NightBoardAgent.exe 在哪？</b></summary>
+
+源码 zip 里没有开箱即用的 exe（仓库根目录曾附带过一份，但那是方向键
+8/2/4/6 修复前的旧构建，为避免误用已移除）。请从 [Releases](../../releases)
+下载最新 `NightBoardAgent.exe`，或在 `pc-agent/` 下运行 `build.bat`
+自行编译（产物 `pc-agent/NightBoardAgent.exe`）。
+</details>
+
+<details>
 <summary><b>打字延迟高 / 键盘跟手性差？</b></summary>
 
 切到局域网模式（同 WiFi 下典型 2~10ms，蓝牙典型 15~40ms 且受 2.4G 干扰抖动）。

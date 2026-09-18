@@ -216,6 +216,10 @@ so gaps between keys never drop a tap.
   with your phone model
 - If the touchpad scroll direction feels inverted, yell in an issue — it's a
   one-character fix
+- The Windows agent exe is unsigned, so Windows 11 **Smart App Control** may
+  block it ("application control policy has blocked this file"). The policy is
+  reputation-based, so behavior is intermittent — the same file may launch
+  fine after a while; locally built exes are unsigned too
 
 ## Acknowledgments
 
