@@ -15,8 +15,20 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
-> **Current version: v1.4.1** (based on upstream v1.2.1, version numbering aligned
-> with this repository). What's new in v1.4.1 (vs v1.4.0), by
+> **Current version: v1.4.2** (based on upstream v1.2.1, version numbering aligned
+> with this repository). What's new in v1.4.2 (vs v1.4.1):
+>
+> - LAN: the Win key no longer goes dead. The agent injected LWin/RCtrl/RAlt/RWin
+>   as scan code + E0 prefix — where the E0 prefix is dropped by a keyboard
+>   filter chain, LWin (0x5B) has no standard meaning at all, while RCtrl/RAlt
+>   silently degrade to their left-side twins (breaking AltGr). All four now
+>   use VK injection, same as the editing cluster. **Update `NightBoardAgent.exe`
+>   to the v1.4.2 asset**; the APK only bumps the version number.
+> - Repo: the stale root `NightBoardAgent.exe` (pre-fix v1.3.x build) removed
+>   (#15); FAQ entries added for Smart App Control blocks and finding the agent
+>   in a source zip.
+>
+> What's new in v1.4.1 (vs v1.4.0), by
 > [@TeaClearInkII](https://github.com/TeaClearInkII) (PR #12/#13, see
 > [FIXLOG.md](FIXLOG.md) — **update NightBoardAgent.exe together with the APK**):
 >

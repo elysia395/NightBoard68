@@ -4,8 +4,9 @@
   简体中文 · <a href="README_EN.md">English</a>
 </p>
 
-> **当前版本：v1.4.1**（基于上游 [v1.2.1](https://github.com/elysia395/NightBoard68/releases/tag/v1.2.1)，
+> **当前版本：v1.4.2**（基于上游 [v1.2.1](https://github.com/elysia395/NightBoard68/releases/tag/v1.2.1)，
 > 版本号与上游仓库对齐。本分支全部改动点见下方
+> [「v1.4.2 改动点」](#v142-改动点相对-v141)、
 > [「v1.4.1 改动点」](#v141-改动点相对-v140)、
 > [「v1.4.0 改动点」](#v140-改动点相对-v132)、
 > [「v1.3.2 改动点」](#v132-改动点相对-v131) 等各版本文档）
@@ -115,6 +116,28 @@ F1~F12 → 数字行 → 手机式 26 键**。
 
 本分支构建与上游官方构建签名不同：先卸载旧版再安装（只丢失 App 内设置）。
 </details>
+
+## v1.4.2 改动点（相对 v1.4.1）
+
+### 局域网：Win 键失灵（右 Ctrl / 右 Alt 同类隐患一并修复）
+
+- **根因**与方向键 8/2/4/6 同类：Agent 端 LWin / RCtrl / RAlt / RWin 仍走
+  「扫描码 + E0 前缀」注入；E0 被键盘过滤链丢弃时，LWin 扫描码 0x5B 没有
+  标准无 E0 含义 → **Win 键彻底失灵**；右 Ctrl / 右 Alt 则静默退化成左键
+  （AltGr 组合键失效）。蓝牙模式不受影响——走 HID 修饰位，不经过 Agent。
+- **修复**（[NightBoardAgent.cs](pc-agent/NightBoardAgent.cs)）：四种键全部改
+  **VK 注入**（VK_LWIN / VK_RWIN / VK_RCONTROL / VK_RMENU），与 NumLock、
+  键盘布局、过滤驱动无关。本机实测四种键按下/释放状态全部正确
+  （[`pc-agent/test-winkey.ps1`](pc-agent/test-winkey.ps1) 可复跑）。
+- **电脑端必须同步更新**到本版附件 `NightBoardAgent-v1.4.2.exe`；
+  APK 无行为变化，仅对齐版本号。
+
+### 仓库与文档（#15）
+
+- 移除根目录过期的 `NightBoardAgent.exe`（v1.3.x 旧构建；从源码 zip 拿它的
+  用户会打出 8/2/4/6）。仓库只保留 `pc-agent/` 下的最新构建。
+- FAQ 新增：Windows 11 Smart App Control 拦截未签名 exe 的说明、
+  源码 zip 如何获取 Agent。
 
 ## v1.4.1 改动点（相对 v1.4.0）
 
