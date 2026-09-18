@@ -416,11 +416,14 @@ class NightBoardAgent
         m[0xE0] = new KeyDef(0x1D, false, 0);   // LCtrl
         m[0xE1] = new KeyDef(0x2A, false, 0);   // LShift
         m[0xE2] = new KeyDef(0x38, false, 0);   // LAlt
-        m[0xE3] = new KeyDef(0x5B, true, 0);    // LWin
-        m[0xE4] = new KeyDef(0x1D, true, 0);    // RCtrl
+        // LWin/RCtrl/RAlt/RWin 原走扫描码+E0：E0 被键盘过滤链丢弃时
+        // LWin(0x5B) 无标准无 E0 含义 → Win 键彻底失灵，RCtrl/RAlt 静默
+        // 退化成左键（AltGr 失效）。与编辑键区同理改 VK 注入。
+        m[0xE3] = new KeyDef(0, false, 0x5B);   // LWin (VK_LWIN)
+        m[0xE4] = new KeyDef(0, false, 0xA3);   // RCtrl (VK_RCONTROL)
         m[0xE5] = new KeyDef(0x36, false, 0);   // RShift
-        m[0xE6] = new KeyDef(0x38, true, 0);    // RAlt (AltGr)
-        m[0xE7] = new KeyDef(0x5C, true, 0);    // RWin
+        m[0xE6] = new KeyDef(0, false, 0xA4);   // RAlt (VK_RMENU / AltGr)
+        m[0xE7] = new KeyDef(0, false, 0x5C);   // RWin (VK_RWIN)
         return m;
     }
 
