@@ -33,6 +33,10 @@ def main():
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean", "--onefile", "--console",
         "--name", "QuietType",
+        # 输出位置固定到 quiettype/ 下，不受当前工作目录影响
+        "--distpath", os.path.join(_HERE, "dist"),
+        "--workpath", os.path.join(_HERE, "build"),
+        "--specpath", _HERE,
         # 让 PyInstaller 的模块分析找到内嵌 segno（vendor/ 在运行时也会进 sys.path）
         "--paths", os.path.join(_SERVER, "vendor"),
         # 手机端网页资源与二维码库打进 exe（Windows 用 ; 分隔 源;目标）
@@ -42,7 +46,7 @@ def main():
     ]
     print("执行:", " ".join(cmd))
     subprocess.check_call(cmd)
-    print("完成: dist\\QuietType.exe（单文件，免安装 Python）")
+    print("完成: %s（单文件，免安装 Python）" % os.path.join(_HERE, "dist", "QuietType.exe"))
 
 
 if __name__ == "__main__":

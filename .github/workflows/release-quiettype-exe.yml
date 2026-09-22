@@ -34,13 +34,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           python quiettype/build_exe.py
-          ls -lh dist/
+          ls -lh quiettype/dist/
 
       - name: 冒烟测试：启动 exe，验证 API / 网页 / 二维码
         shell: bash
         run: |
           set -euo pipefail
-          ./dist/QuietType.exe > qt-startup.log 2>&1 &
+          ./quiettype/dist/QuietType.exe > qt-startup.log 2>&1 &
           EXE_PID=$!
           INFO=""
           for i in $(seq 1 30); do
@@ -70,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: QuietType-exe
-          path: dist/QuietType.exe
+          path: quiettype/dist/QuietType.exe
           if-no-files-found: error
 
       - name: 发布 Release（仅 tag 触发）
@@ -85,7 +85,7 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "QuietType Windows 主机端 ${GITHUB_REF_NAME#quiettype-win-} · 双击即用（免装 Python）" \
             --notes-file quiettype/RELEASE_NOTES_WIN.md \
-            dist/QuietType.exe \
+            quiettype/dist/QuietType.exe \
             quiettype/firewall_allow.bat \
           || gh release upload "${GITHUB_REF_NAME}" \
-            dist/QuietType.exe quiettype/firewall_allow.bat --clobber
+            quiettype/dist/QuietType.exe quiettype/firewall_allow.bat --clobber
