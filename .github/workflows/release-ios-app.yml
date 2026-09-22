@@ -37,6 +37,15 @@ jobs:
         run: |
           set -euo pipefail
           cd quiettype/ios
+          echo "=== 可用 Xcode ==="
+          ls -d /Applications/Xcode*.app || true
+          echo "=== 工程 objectVersion ==="
+          grep -m1 objectVersion QuietType.xcodeproj/project.pbxproj || true
+          # XcodeGen 新版默认生成 Xcode 16 的工程格式（objectVersion 56），
+          # runner 镜像默认 Xcode 版本不一定够新，这里切到镜像里最新的 Xcode
+          XCODE_APP="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
           xcodebuild -project QuietType.xcodeproj \
             -scheme QuietType \
             -configuration Release \
