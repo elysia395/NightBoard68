@@ -50,12 +50,15 @@
 
 ## 局域网模式（延迟更低，可选）
 
-1. **电脑**：从 Releases 下载 `NightBoardAgent.exe`，**双击运行**即可
-   （免安装、不用管理员；首次运行防火墙弹窗点「允许」）
+1. **电脑**：从 Releases 下载 `NightBoardAgent.exe`（Windows）或
+   `NightBoardAgent-<版本>-mac.dmg`（macOS），双击/拖装后运行即可
+   （Windows 免安装、不用管理员；首次运行防火墙弹窗点「允许」；
+   macOS 首次启动需右键 → 打开，并授权「辅助功能」）
 2. **网络**：手机和电脑连**同一个 WiFi**（电脑连手机热点效果最好）
 3. **连接**：App 主页选「局域网模式」，键盘顶部出现 `●局域网 xms` 就是连上了
 
-- 搜不到电脑？App 设置里手动填电脑 IP（电脑 cmd 输 `ipconfig` 看 IPv4 地址）
+- 搜不到电脑？App 设置里手动填电脑 IP（Windows cmd 输 `ipconfig`；
+  macOS 在 系统设置 → Wi-Fi → 详细信息 里看 IPv4 地址）
 - 只想用蓝牙？不运行 exe、保持蓝牙模式，一切照旧
 - 连接不对劲？点「检查连接」一键重新探测
 
@@ -407,7 +410,9 @@ Ctrl Win Alt        Space        Alt Fn Ctrl  ←  ↓  →
 - 手机：Android 9.0+（使用系统 `BluetoothHidDevice` profile）
 - 电脑：
   - 蓝牙模式：任何支持蓝牙键盘/鼠标的系统（Windows / macOS / Linux / Android TV）
-  - 局域网模式：Windows 10/11 + `NightBoardAgent.exe`（macOS/Linux 暂未适配，欢迎 PR）
+  - 局域网模式：Windows 10/11 + `NightBoardAgent.exe`（[`pc-agent/`](pc-agent/)），
+    macOS 12+ + `NightBoardAgent.app`（[`mac-agent/`](mac-agent/)，DMG 见
+    [mac 版 Release](../../releases)）；Linux 暂未适配，欢迎 PR
 
 ## 使用
 
@@ -422,8 +427,13 @@ Ctrl Win Alt        Space        Alt Fn Ctrl  ←  ↓  →
 
 ### 局域网模式（低延迟，可选）
 
-1. 电脑：从 Releases 下载 `NightBoardAgent.exe` 双击运行（防火墙弹窗点允许）；
-   或在 [`pc-agent/`](pc-agent/) 目录自行编译
+1. 电脑：
+   - Windows：从 Releases 下载 `NightBoardAgent.exe` 双击运行（防火墙弹窗点允许）；
+     或在 [`pc-agent/`](pc-agent/) 目录自行编译
+   - macOS：从 Releases 下载 `NightBoardAgent-<版本>-mac.dmg`，把 App 拖进
+     「应用程序」后**右键 → 打开**（未签名分发，首次需要），并在
+     *系统设置 → 隐私与安全性 → 辅助功能* 里勾选（菜单栏图标有快捷入口），
+     详见 [`mac-agent/README.md`](mac-agent/README.md)
 2. 手机与电脑连同一个 WiFi（或电脑连手机热点）
 3. App 主页切换到「局域网模式」，状态条出现 `●局域网 xms` 即已连接；
    搜不到就在设置里手动填电脑 IP
@@ -450,6 +460,15 @@ cd pc-agent && build.bat
 :: 产物：pc-agent/NightBoardAgent.exe（免安装单文件）
 ```
 
+macOS 版电脑端代理（单文件 Swift，零第三方依赖，需要 Xcode 命令行工具）：
+
+```bash
+swiftc -O -o NightBoardAgent mac-agent/NightBoardAgent.swift \
+  -framework Foundation -framework AppKit \
+  -framework CoreGraphics -framework ApplicationServices
+:: 装进 NightBoardAgent.app/Contents/MacOS/ 即可运行，详见 mac-agent/README.md
+```
+
 ## 技术实现（一句话版）
 
 `BluetoothHidDevice`（Android 9+ 的 HID Device profile）注册键盘+鼠标组合设备
@@ -465,8 +484,8 @@ cd pc-agent && build.bat
   「修饰键+字母」之间消歧的设计取舍
 - 部分国产 ROM（MIUI/ColorOS 老版本）对 HID device profile 有限制，
   若一直显示「正在注册蓝牙键盘…」请反馈机型
-- 局域网模式的电脑端目前仅支持 Windows；macOS / Linux 需要等价的
-  SendInput 替代（欢迎 PR）
+- 局域网模式的电脑端支持 Windows 10/11 与 macOS 12+（Linux 尚未适配，欢迎 PR）；
+  macOS 版注入合成事件需要「辅助功能」权限，且为未签名分发，首次启动需右键 → 打开
 - 触控板滚轮方向如与习惯不符可在 issue 里喊一声，一行符号的事
 
 ## 致谢与参考

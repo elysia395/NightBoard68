@@ -1,0 +1,87 @@
+name: release-mac-agent
+
+# NightBoard68 macOS 局域网 Agent 构建与发布
+#
+# 触发方式：
+#   - 推送形如 v1.4.2-mac.1 的 tag（在 NightBoard68-mac 分支上打 tag）→ 构建并发布 GitHub Release
+#   - 手动触发（Actions 页面 Run workflow）→ 只构建并上传 DMG 工件，不发布 Release
+#
+# 产物：NightBoardAgent-<tag>.dmg（通用二进制 x86_64 + arm64，macOS 12+）
+
+on:
+  push:
+    tags:
+      - 'v*-mac*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译通用二进制（x86_64 + arm64）
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          for ARCH in x86_64 arm64; do
+            swiftc -O -whole-module-optimization \
+              -target "${ARCH}-apple-macos12.0" \
+              -o "build/agent-${ARCH}" \
+              mac-agent/NightBoardAgent.swift \
+              -framework Foundation \
+              -framework AppKit \
+              -framework CoreGraphics \
+              -framework ApplicationServices
+          done
+          mkdir -p NightBoardAgent.app/Contents/MacOS
+          lipo -create build/agent-x86_64 build/agent-arm64 \
+            -output NightBoardAgent.app/Contents/MacOS/NightBoardAgent
+          cp mac-agent/Info.plist NightBoardAgent.app/Contents/Info.plist
+          VERSION="${GITHUB_REF_NAME#v}"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" \
+            NightBoardAgent.app/Contents/Info.plist
+          plutil -replace CFBundleVersion -string "$VERSION" \
+            NightBoardAgent.app/Contents/Info.plist
+
+      - name: 临时签名并打包 DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 临时（ad-hoc）签名：未购买开发者证书，签名仅为避免"已损坏"误报；
+          # 用户首次启动仍需 右键 → 打开（Gatekeeper 对未签名分发的常规要求）
+          xattr -cr NightBoardAgent.app
+          codesign --force --sign - NightBoardAgent.app
+          mkdir -p dmgroot
+          cp -R NightBoardAgent.app dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname NightBoardAgent \
+            -srcfolder dmgroot -ov -format UDZO \
+            "NightBoardAgent-${GITHUB_REF_NAME}.dmg"
+          ls -lh "NightBoardAgent-${GITHUB_REF_NAME}.dmg"
+
+      - name: 上传构建工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: NightBoardAgent-dmg
+          path: NightBoardAgent-*.dmg
+          if-no-files-found: error
+
+      - name: 发布 Release（仅 tag 触发）
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 同一 tag 重跑时 create 会因已存在而失败，退回到上传并覆盖资产
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "NightBoard68 ${GITHUB_REF_NAME} · macOS 局域网 Agent" \
+            --notes-file mac-agent/RELEASE_NOTES.md \
+            "NightBoardAgent-${GITHUB_REF_NAME}.dmg" \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            "NightBoardAgent-${GITHUB_REF_NAME}.dmg" --clobber
