@@ -16,6 +16,14 @@ import os
 import subprocess
 import sys
 
+# 兼容非中文 Windows 的默认代码页（cp1252 打中文会 UnicodeEncodeError）
+for _s in (sys.stdout, sys.stderr):
+    try:
+        if _s and hasattr(_s, "reconfigure"):
+            _s.reconfigure(errors="replace")
+    except Exception:
+        pass
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SERVER = os.path.join(_HERE, "server")
 
