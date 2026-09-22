@@ -25,7 +25,7 @@ struct RootView: View {
 /// 连接页:填电脑 IP 与端口(与电脑端 run.bat 显示的一致)。
 struct ConnectView: View {
     @ObservedObject var client: QuietTypeClient
-    var onConnected: @escaping () -> Void
+    var onConnected: () -> Void
 
     @AppStorage("qt_host") private var host = ""
     @AppStorage("qt_port") private var port = "8567"
