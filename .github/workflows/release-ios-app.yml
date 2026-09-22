@@ -1,0 +1,82 @@
+name: release-ios-app
+
+# QuietType iOS App 构建与发布
+#
+# 触发方式：
+#   - 推送形如 quiettype-ios-1.0.0 的 tag → 构建未签名 IPA 并发布 GitHub Release
+#   - 手动触发 → 只构建并上传 IPA 工件，不发布 Release
+#
+# 产物：QuietType-ios-<版本>-unsigned.ipa（未签名，需用 AltStore / Sideloadly
+# 以个人 Apple ID 重签后安装，详见 quiettype/ios/README-iOS.md）
+
+on:
+  push:
+    tags:
+      - 'quiettype-ios-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成 Xcode 工程
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          cd quiettype/ios
+          xcodegen generate
+
+      - name: 构建未签名 App（iOS 真机架构）
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd quiettype/ios
+          xcodebuild -project QuietType.xcodeproj \
+            -scheme QuietType \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      - name: 打包 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#quiettype-ios-}"
+          mkdir -p Payload
+          cp -R quiettype/ios/build/Build/Products/Release-iphoneos/QuietType.app Payload/
+          zip -qr "QuietType-ios-${VERSION}-unsigned.ipa" Payload
+          ls -lh "QuietType-ios-${VERSION}-unsigned.ipa"
+
+      - name: 上传构建工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietType-ios-ipa
+          path: QuietType-ios-*-unsigned.ipa
+          if-no-files-found: error
+
+      - name: 发布 Release（仅 tag 触发）
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#quiettype-ios-}"
+          # 同一 tag 重跑时 create 会因已存在而失败，退回到上传并覆盖资产
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "QuietType iOS ${VERSION} · iPhone 静音键盘 / 触控板（未签名 IPA）" \
+            --notes-file quiettype/ios/RELEASE_NOTES.md \
+            "QuietType-ios-${VERSION}-unsigned.ipa" \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            "QuietType-ios-${VERSION}-unsigned.ipa" --clobber

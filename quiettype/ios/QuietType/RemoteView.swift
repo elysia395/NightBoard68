@@ -3,7 +3,7 @@ import SwiftUI
 /// 连接成功后的主界面:键盘 / 触控板两个面板。
 struct RemoteView: View {
     @ObservedObject var client: QuietTypeClient
-    var onDisconnect: () -> Void
+    var onDisconnect: @escaping () -> Void
 
     @State private var tab: Tab = .keyboard
     @StateObject private var mirror: KeyboardMirror

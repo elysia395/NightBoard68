@@ -1,64 +1,88 @@
-# QuietType iOS App —— 编译与侧载(不进入 App Store)
+# QuietType iOS App —— 安装（侧载）与编译
 
-## 前提(硬性)
+## 零、已发布安装包（大多数人看这里）
 
-- **一台 Mac**(自己的、借的、或云端 Mac,如 MacinCloud)——iOS 只能用
-  macOS + Xcode 编译。只有 Windows 编不了 Swift,**请先用网页版**。
-- Mac 上装好 **Xcode**(App Store 免费,≥ 15)。
-- iPhone(iOS 15+)+ 数据线,或与 Mac 登录同一 Apple ID。
-- **免费 Apple ID** 即可侧载(无需 $99)。iOS 16+ 需要先到
-  iPhone「设置 → 隐私与安全性 → 开发者模式」打开并重启。
+[Releases](../../releases) 里有 `QuietType-ios-1.0.0-unsigned.ipa`：
+**未签名 IPA，用自己的 Apple ID 重签后即可安装，全程不需要 Mac。**
 
-## 一、在 Xcode 里建工程并放入源码
+iOS 不像 Android 能直接装 APK，任何分发方式（含 App Store）都绕不开 Apple 签名；
+免费 Apple ID 的侧载签名 **7 天有效**，到期用同一工具重签一次即可（App 数据保留），
+$99/年开发者账号的签名有效期 1 年。
 
-1. `File → New → Project… → iOS → App`
-   - Product Name:`QuietType`;Interface:**SwiftUI**;Language:**Swift**。
-   - Bundle Identifier 填唯一值,如 `com.你的名字.quiettype`(小写字母/数字/点)。
-2. 工程会生成默认的 `QuietTypeApp.swift` 与 `ContentView.swift`。
-   把本目录 `QuietType/` 里的 **7 个 .swift 文件**全部拷进工程
-   (同名文件直接覆盖默认的两个;其余 5 个拖入工程,勾选 Target 成员):
+### Windows 用户：Sideloadly（推荐，图形界面）
 
-   | 文件 | 作用 |
-   |------|------|
-   | QuietTypeApp.swift | App 入口 |
-   | ContentView.swift   | 连接页 + 根视图 |
-   | Network.swift       | 与 Windows 主机通信(取 token、POST 协议消息) |
-   | KeyboardMirror.swift| 镜像文本框增量 diff |
-   | MirrorTextView.swift| UITextView 包装(处理中文输入法组合) |
-   | RemoteView.swift    | 键盘 / 触控板主界面 |
-   | TouchpadView.swift  | 触控板手势(多点触摸) |
+1. iPhone 数据线连电脑，电脑装 [Sideloadly](https://sideloadly.io/)（免费）
+2. iPhone：设置 → 通用 → 传输或还原 iPhone → 做一次本地备份（Sideloadly 要求，
+   不会动现有数据）；**iOS 16+ 还要打开 开发者模式**：
+   设置 → 隐私与安全性 → 开发者模式 → 打开并重启
+3. Sideloadly 登录你的 Apple ID → 选择下载的 IPA → Start
+4. iPhone：设置 → 通用 → VPN 与设备管理 → 信任你的开发者证书
+5. 打开 QuietType，弹「本地网络」权限时点允许；填电脑 IP（端口默认 8567）→ 连接 → 开打
 
-3. 打开 `Info.plist`(工程里找),加入 `ios/Info.plist.extra.txt` 的内容:
-   - `NSLocalNetworkUsageDescription`:首次连局域网会弹权限说明;
-   - `NSAppTransportSecurity → NSAllowsArbitraryLoads = YES`:允许 http 明文连局域网 IP。
+### Mac 用户
 
-## 二、签名与真机运行
+AltStore / Sideloadly 同样适用，流程与上面一致。
 
-1. Xcode 左上选你的 **iPhone** 作为运行目标(先插线)。
-2. `Signing & Capabilities → Team`:选你的 Apple ID
-   (第一次要在 Xcode `Settings → Accounts` 里登录并信任)。
-3. `⌘R` 运行。首次在手机上:**设置 → 通用 → VPN 与设备管理 →
-   信任你的开发者证书**;弹出“本地网络”权限时选允许。
-4. 打开 App,填电脑 IP(端口默认 8567)→ 连接 → 开打。
+### 到期续签
 
-## 三、免费账号 7 天续签(重要)
+重跑一次 Sideloadly / AltStore 即可；或把 iPhone 插回 Mac 用 Xcode 再 ⌘R 一次。
 
-免费 Apple ID 的开发者证书 **7 天过期**,之后 App 打不开,需要重签:
+### 不想折腾
 
-- 最省事:每次到期前,把 iPhone 插回 Mac,Xcode 里再 `⌘R` 一次(自动重签)。
-- 或用 Windows 也能操作的方式:在 Mac 上 `Product → Archive → Distribute App`
-  导出一次 **.ipa**,之后在 Windows 上用 **AltStore / Sideloadly**
-  用你的 Apple ID 重签续期,不再需要 Mac。
-- 想一年免管:$99/年 的个人开发者账号(Apple Developer Program),同一流程。
+**网页版零安装、零签名**：电脑双击 `quiettype/run.bat`，iPhone Safari 打开
+`http://电脑IP:8567`（可「添加到主屏幕」伪装成 App），功能与原生 App 一致。
 
-## 四、没有 Mac 的替代方案
+## 一、开发者：工程结构（XcodeGen）
 
-网页版功能一致、零编译:电脑运行 `run.bat`,iPhone Safari 打开
-`http://电脑IP:8567` 即可(可“添加到主屏幕”伪装成 App)。
-本仓库的协议(PROTOCOL.md)两边通用,日后有 Mac 随时把原生壳补上。
+本目录用 [XcodeGen](https://github.com/yonaskolb/XcodeGen) 描述工程，
+**`.xcodeproj` 不入库**，由 `project.yml` 现生成（CI 同样如此）：
+
+```bash
+brew install xcodegen
+cd quiettype/ios
+xcodegen generate      # 生成 QuietType.xcodeproj
+```
+
+| 文件 | 作用 |
+| --- | --- |
+| `project.yml` | 工程描述（目标 iOS 16+、Bundle ID、无签名设置） |
+| `Info.plist` | 静态 Info.plist：本地网络权限说明 + ATS 允许 http 明文 |
+| `QuietType/` | 7 个 Swift 源文件 + `Assets.xcassets`（App 图标） |
+| `QuietTypeApp.swift` | App 入口 |
+| `ContentView.swift` | 连接页 + 根视图 |
+| `Network.swift` | 与 Windows 主机通信（取 token、POST 协议消息） |
+| `KeyboardMirror.swift` | 镜像文本框增量 diff |
+| `MirrorTextView.swift` | UITextView 包装（处理中文输入法组合） |
+| `RemoteView.swift` | 键盘 / 触控板主界面 |
+| `TouchpadView.swift` | 触控板手势（多点触摸） |
+
+### 本机编译 / 真机运行
+
+```bash
+xcodebuild -project QuietType.xcodeproj -scheme QuietType \
+  -configuration Release -destination 'generic/platform=iOS' build
+```
+
+Xcode 里打开生成的工程，选你的 iPhone 为运行目标，`Signing & Capabilities` 选你的
+Team（免费 Apple ID 即可），⌘R 运行。首次在手机上需信任证书（见上文第 4 步）。
+
+### CI 自动出包
+
+推送到本分支的 `quiettype-ios-*` tag 会触发
+`.github/workflows/release-ios-app.yml`：macOS runner 上 XcodeGen 生成工程 →
+**无签名构建** → 打包成 `Payload/`  zip  IPA → 发布 GitHub Release。
+仓库里不需要任何签名证书；安装时的重签由侧载工具或开发者证书完成。
+
+## 二、改 Bundle ID / 端口 / 图标
+
+- Bundle ID：改 `project.yml` 的 `PRODUCT_BUNDLE_IDENTIFIER`
+- 端口：App 里端口框填主机端 `--port` 的同一数值（默认 8567）
+- 图标：替换 `QuietType/Assets.xcassets/AppIcon.appiconset/icon-1024.png`
+  （单尺寸 1024×1024，Xcode 14+ 通用图标）
 
 ## 备注
 
-- Swift 源码在纯 Windows 环境编写、无法本机编译验证;如遇编译报错,
-  多半是 API 名称/签名小差异,按 Xcode 提示微调即可(结构都很直白)。
-- 需要改端口时,App 端端口框填主机端 `--port` 的同一数值。
+- Swift 源码早期在纯 Windows 环境编写；现已由 CI 真机架构编译验证，
+  但这是**首次真机分发**，如有问题欢迎带日志反馈（App 内问题优先看
+  `quiettype/run.bat` 窗口的服务端日志）
+- 协议见 [`../PROTOCOL.md`](../PROTOCOL.md)，网页版与 iOS App 两边通用
