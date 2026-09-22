@@ -12,6 +12,7 @@ captures/
 
 # XcodeGen 生成的工程与构建产物（CI 里现生成，见 .github/workflows）
 quiettype/ios/QuietType.xcodeproj/
+quiettype/ios/QuietType-Info.plist
 quiettype/ios/build/
 Payload/
 *.ipa

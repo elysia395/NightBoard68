@@ -2,7 +2,7 @@
 #
 # 用法：在本目录执行 `xcodegen generate` 生成 QuietType.xcodeproj。
 # CI（.github/workflows/release-ios-app.yml）同样用它生成工程后构建未签名 IPA，
-# 因此工程文件本身不入库，改配置改这里即可。
+# 因此工程文件与生成的 Info.plist 均不入库，改配置改这里即可。
 #
 # 手动在 Xcode 里建的工程与它等价（见 README-iOS.md 第一节）。
 
@@ -22,17 +22,40 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: QuietType   # 7 个 Swift 源文件 + Assets.xcassets（App 图标）
+    # Info.plist 由 XcodeGen 按下面的 properties 生成（含本地网络权限与 ATS），
+    # 不用静态文件：避免 INFOPLIST_FILE / GENERATE_INFOPLIST 设置被绕过导致
+    # 自定义键丢失（本地网络权限丢了 App 就连不上电脑端）
     info:
-      path: Info.plist
+      path: QuietType-Info.plist
+      properties:
+        CFBundleDevelopmentRegion: zh_CN
+        CFBundleDisplayName: QuietType
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: $(PRODUCT_BUNDLE_PACKAGE_TYPE)
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        CFBundleIconName: AppIcon
+        LSRequiresIPhoneOS: true
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: QuietType 需要访问局域网，才能把输入发送到同一 Wi-Fi 下的 Windows 电脑。
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nightboard.quiettype
         PRODUCT_NAME: QuietType
-        INFOPLIST_FILE: Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST: NO
         # 无签名构建：正式分发签名由侧载工具（AltStore / Sideloadly）或
         # 开发者证书在安装时完成，Xcode 工程不绑定任何 Team
         CODE_SIGN_STYLE: Manual

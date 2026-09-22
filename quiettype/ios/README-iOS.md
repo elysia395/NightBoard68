@@ -45,8 +45,7 @@ xcodegen generate      # 生成 QuietType.xcodeproj
 
 | 文件 | 作用 |
 | --- | --- |
-| `project.yml` | 工程描述（目标 iOS 16+、Bundle ID、无签名设置） |
-| `Info.plist` | 静态 Info.plist：本地网络权限说明 + ATS 允许 http 明文 |
+| `project.yml` | 工程描述：目标 iOS 16+、Bundle ID、无签名设置，以及 `info.properties`（Info.plist 由它生成，含本地网络权限说明 + ATS 允许 http 明文） |
 | `QuietType/` | 7 个 Swift 源文件 + `Assets.xcassets`（App 图标） |
 | `QuietTypeApp.swift` | App 入口 |
 | `ContentView.swift` | 连接页 + 根视图 |
