@@ -17,6 +17,16 @@ class ShortcutStore(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("nightboard", Context.MODE_PRIVATE)
 
+    /** Mac 键位下修饰键标签用 ⌃⌥⌘（设置页"键盘布局"切换） */
+    private val isMac get() = prefs.getString("keyboard_layout", "win") == "mac"
+
+    private val MOD_ORDER = listOf(
+        Mods.LCTRL to (if (isMac) "⌃" else "Ctrl"),
+        Mods.LALT to (if (isMac) "⌥" else "Alt"),
+        Mods.LSHIFT to "Shift",
+        Mods.LGUI to (if (isMac) "⌘" else "Win"),
+    )
+
     fun load(): List<Shortcut?> {
         val raw = prefs.getString("custom_shortcuts", null) ?: return defaultList()
         return try {
@@ -67,13 +77,6 @@ class ShortcutStore(context: Context) {
     companion object {
         const val SLOTS = 6
 
-        private val MOD_ORDER = listOf(
-            Mods.LCTRL to "Ctrl",
-            Mods.LALT to "Alt",
-            Mods.LSHIFT to "Shift",
-            Mods.LGUI to "Win",
-        )
-
         /** 编辑器里可选的按键：标签 → HID 键码 */
         val CHOOSABLE_KEYS: List<Pair<String, Int>> = buildList {
             for (c in 'A'..'Z') add(c.toString() to (Hid.A + (c - 'A')))
@@ -109,21 +112,21 @@ class ShortcutStore(context: Context) {
             add("Caps" to Hid.CAPSLOCK)
             add("PrtSc" to Hid.PRTSC)
         }
+    }
 
-        /** 生成显示标签，如 "Ctrl+Shift+T"、"Win+D" */
-        fun labelFor(mods: Int, code: Int): String {
-            val sb = StringBuilder()
-            for ((bit, name) in MOD_ORDER) {
-                if (mods and bit != 0) {
-                    if (sb.isNotEmpty()) sb.append('+')
-                    sb.append(name)
-                }
+    /** 生成显示标签，如 "Ctrl+Shift+T"、"Win+D"（Mac 模式为 ⌃⌥⌘ 风格） */
+    fun labelFor(mods: Int, code: Int): String {
+        val sb = StringBuilder()
+        for ((bit, name) in MOD_ORDER) {
+            if (mods and bit != 0) {
+                if (sb.isNotEmpty()) sb.append('+')
+                sb.append(name)
             }
-            val keyLabel = CHOOSABLE_KEYS.firstOrNull { it.second == code }?.first
-                ?: code.toString()
-            if (sb.isNotEmpty()) sb.append('+')
-            sb.append(keyLabel)
-            return sb.toString()
         }
+        val keyLabel = CHOOSABLE_KEYS.firstOrNull { it.second == code }?.first
+            ?: code.toString()
+        if (sb.isNotEmpty()) sb.append('+')
+        sb.append(keyLabel)
+        return sb.toString()
     }
 }

@@ -11,7 +11,8 @@ import android.view.View
  *  - 单指移动 = 光标（亚像素累积，12ms 节流，慢速拖动不丢步）
  *  - 轻点（<220ms 且位移 <14px）= 左键单击
  *  - 双击后按住拖动 = 选择文本（第二次按下即左键按下，随移动拖动选区）
- *  - 单指长按 500ms 不动 = 右键
+ *  - 单指长按 500ms 不动 = 进入拖动模式（左键按下，随后移动即拖拽文件/窗口）
+ *  - 双指轻点（两指位移小、按住时间短）= 右键
  *  - 滚动条手指（由视图判定后告知）= 上下滑全幅滚轮，优先级最高
  *  - 双指滑动 = 滚动；指间距变化占主导时 = 缩放（按住 Ctrl + 滚轮）
  *  - 滚动/甩动带惯性，16ms 步进衰减
@@ -29,6 +30,16 @@ class TouchpadEngine(
     /** 长按右键/进入拖动等时机触发震动（视图注入） */
     var feedback: (() -> Unit)? = null
 
+    /**
+     * 外部保持按下的鼠标键位（视图的鼠标键列按住时注入，如拖放 = 左键按住 + 触控板移动）。
+     * 非 0 时：触控板位移/滚轮报告携带该按钮位；释放后视图把它清零。
+     */
+    @Volatile
+    var externalButton = 0
+        set(v) {
+            field = if (v and 0b111 != 0) v and 0b111 else 0
+        }
+
     // ---- 指针状态 ----
     private val pointers = HashMap<Int, Pair<Float, Float>>()
     private val inScroll = HashSet<Int>()
@@ -37,11 +48,11 @@ class TouchpadEngine(
     private var downAt = 0L
     private var moveDist = 0f
 
-    // ---- 长按右键 ----
+    // ---- 长按拖动 ----
     private var longPressRun: Runnable? = null
     private var longPressFired = false
 
-    // ---- 轻点 / 双击拖动 ----
+    // ---- 轻点 / 双击拖动 / 双指轻点 ----
     private var lastTapUpAt = 0L
     private var lastTapX = 0f
     private var lastTapY = 0f
@@ -49,6 +60,10 @@ class TouchpadEngine(
     private var dragPointer = -1                // 拖动选择中的手指
     private var activeButton = 0                // 拖动进行中 = 1：位移/滚轮报告必须携带按住的左键，
                                                 // 否则 Agent 的边沿检测会把按下态当成"抬起"
+    // 双指轻点 = 右键：第二指落下时激活，双指位移/按住时长均在阈值内才判定
+    private var twoTapStartAt = 0L
+    private var twoTapMove = 0f
+    private var twoTapActive = false
 
     // ---- 位移 / 滚轮累积 ----
     private var pendingDx = 0f
@@ -110,10 +125,12 @@ class TouchpadEngine(
                     if (pointers.size == 1 && moveDist < TAP_SLOP_PX && !longPressFired &&
                         inScroll.isEmpty() && dragPointer == -1
                     ) {
+                        // 长按 500ms 不动 = 进入拖动模式：左键按下，随后移动即拖拽
                         longPressFired = true
+                        dragPointer = pid
+                        activeButton = 1
+                        hub.sendMouse(0, 0, 0, 1)
                         feedback?.invoke()
-                        hub.sendMouse(0, 0, 0, 2)
-                        scheduleClickUp()
                     }
                 }
                 longPressRun = run
@@ -123,6 +140,11 @@ class TouchpadEngine(
             // 第二根手指落下：建立捏合判定基线
             pinchLocked = false; scrollLocked = false; pinchSignal = 0f; pinchDy = 0f
             lastPairDist = pairDist()
+            // 双指轻点=右键：两指落下间隔小才跟踪（间隔大是普通双指操作）
+            cancelLongPress()
+            twoTapActive = now() - downAt < TWO_TAP_MAX_MS
+            twoTapStartAt = now()
+            twoTapMove = 0f
         }
     }
 
@@ -158,6 +180,11 @@ class TouchpadEngine(
                 val d = pairDist()
                 val dd = d - lastPairDist
                 lastPairDist = d
+                // 双指轻点跟踪：累计位移，超出阈值说明在滚动/移动，取消右键判定
+                if (twoTapActive) {
+                    twoTapMove += Math.abs(dx) + Math.abs(dy)
+                    if (twoTapMove > dpx(TWO_TAP_SLOP_DP)) twoTapActive = false
+                }
                 // 意图竞争：带符号的间距信号 vs 带符号的平移量，谁先过阈值锁谁，
                 // 赢家通吃本手势——双指滚动时的间距抖动正负抵消，不会再误触发缩放
                 if (!pinchLocked && !scrollLocked) {
@@ -195,7 +222,8 @@ class TouchpadEngine(
             dragPointer = -1
             activeButton = 0
             cancelLongPress()
-            hub.sendMouse(0, 0, 0, 0)           // 左键抬起，选择结束
+            // 手势拖动结束：只抬本手势的键；外部按住（鼠标键列联动拖放）保持
+            hub.sendMouse(0, 0, 0, externalButton)
             flush(force = true)
             return
         }
@@ -226,6 +254,17 @@ class TouchpadEngine(
             longPressFired = false
         } else if (pointers.size == 1) {
             // 双指 → 单指：剩余手指标记 inert，光标不跳变；双指滚轮/捏合结束收 Ctrl
+            if (twoTapActive) {
+                // 双指轻点 = 右键：两指位移小、双指按住时间短，且未滚动/捏合
+                twoTapActive = false
+                if (now() - twoTapStartAt < TWO_TAP_MAX_MS &&
+                    twoTapMove < dpx(TWO_TAP_SLOP_DP) && !pinchLocked && !scrollLocked
+                ) {
+                    feedback?.invoke()
+                    hub.sendMouse(0, 0, 0, 2)
+                    scheduleClickUp()
+                }
+            }
             inert.add(pointers.keys.first())
             if (pinchLocked) {
                 hub.modUp(Mods.LCTRL)
@@ -242,7 +281,7 @@ class TouchpadEngine(
         if (dragPointer != -1 || clickUpRun != null) {
             clickUpRun?.let { view.removeCallbacks(it) }
             clickUpRun = null
-            if (sendMouseUp) hub.sendMouse(0, 0, 0, 0)
+            if (sendMouseUp) hub.sendMouse(0, 0, 0, externalButton)
         }
         if (pinchLocked) {
             hub.modUp(Mods.LCTRL)
@@ -250,8 +289,11 @@ class TouchpadEngine(
         }
         scrollLocked = false
         pinchSignal = 0f
+        twoTapActive = false
+        twoTapMove = 0f
         dragPointer = -1
         activeButton = 0
+        externalButton = 0
         pointers.clear()
         inScroll.clear()
         inert.clear()
@@ -273,14 +315,15 @@ class TouchpadEngine(
         lastFlush = t
 
         // 位移：只发整数部分，亚像素残留继续累积（慢速拖动不丢步）
-        // 按钮位携带 activeButton：拖动选择进行中，移动事件必须保持左键按下，
+        // 按钮位携带 activeButton（手势拖动）或 externalButton（鼠标键列按住联动拖放），
         // 否则蓝牙的绝对电平/Agent 的边沿检测都会把按下态当成"抬起"
+        val buttons = activeButton or externalButton
         val sx = pendingDx.toInt()
         val sy = pendingDy.toInt()
         if (sx != 0 || sy != 0) {
             pendingDx -= sx
             pendingDy -= sy
-            hub.sendMouse(sx, sy, 0, activeButton)
+            hub.sendMouse(sx, sy, 0, buttons)
         }
         // 滚轮：与位移独立冲销（★不可 else-if，否则残留饿死滚轮）
         pendingWheel = if (force) {
@@ -298,12 +341,13 @@ class TouchpadEngine(
     /** 把滚轮像素冲销成格发送；每条报告最多 ±6 格，超出循环排空 */
     private fun drainWheel(accum: Float, roundUp: Boolean): Float {
         val notch = notchPx()
+        val buttons = activeButton or externalButton
         var w = accum
         while (true) {
             val raw = if (roundUp) Math.round(-w / notch) else (-w / notch).toInt()
             if (raw == 0) break
             val c = raw.coerceIn(-6, 6)
-            hub.sendMouse(0, 0, c, activeButton)
+            hub.sendMouse(0, 0, c, buttons)
             w += c * notch
             if (Math.abs(raw) < 6) break        // 剩余不足一批，下轮继续
         }
@@ -313,7 +357,8 @@ class TouchpadEngine(
     private fun scheduleClickUp() {
         val r = Runnable {
             clickUpRun = null
-            hub.sendMouse(0, 0, 0, 0)
+            // 轻点/右键抬起：保留外部按住键（鼠标键列联动拖放不被抬掉）
+            hub.sendMouse(0, 0, 0, externalButton)
         }
         clickUpRun = r
         view.postDelayed(r, CLICK_UP_MS)
@@ -388,6 +433,8 @@ class TouchpadEngine(
         private const val DOUBLE_TAP_MS = 300L
         private const val DOUBLE_TAP_SLOP_DP = 40f
         private const val LONG_PRESS_MS = 500L
+        private const val TWO_TAP_MAX_MS = 320L      // 双指轻点=右键：双指按住的最长时间
+        private const val TWO_TAP_SLOP_DP = 18f      // 双指轻点：两指累计位移上限
         private const val CLICK_UP_MS = 45L
         private const val FLUSH_MS = 12L
         private const val FAST_MOVE_PX = 3f

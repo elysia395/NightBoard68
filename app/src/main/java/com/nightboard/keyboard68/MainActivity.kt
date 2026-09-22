@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -33,6 +34,7 @@ class MainActivity : Activity(), App.HidUi {
     private lateinit var deviceBox: LinearLayout
     private lateinit var enableBt: Button
     private lateinit var discoverBt: Button
+    private lateinit var batteryBtn: Button
 
     private val app get() = application as App
     private val dp get() = resources.displayMetrics.density
@@ -61,6 +63,35 @@ class MainActivity : Activity(), App.HidUi {
                 setTextColor(color)
                 if (bold) typeface = Typeface.DEFAULT_BOLD
             }
+
+        /** 统一主按钮样式：圆角深色底 + 白字 + 可选 SVG 图标；primary = 主操作按钮 */
+        fun mainBtn(
+            text: String,
+            onClick: () -> Unit,
+            icon: Int = 0,
+            primary: Boolean = false,
+        ): Button = Button(this).apply {
+            this.text = text
+            textSize = 15f
+            isAllCaps = false
+            minHeight = 0
+            minimumHeight = 0
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) Color.parseColor("#0E1116") else fg)
+            background = GradientDrawable().apply {
+                cornerRadius = 10 * dp
+                setColor(if (primary) Color.parseColor("#E8944A") else Color.parseColor("#1C232D"))
+            }
+            if (icon != 0) {
+                val d = resources.getDrawable(icon, null)
+                d?.setTint(if (primary) Color.parseColor("#0E1116") else dim)
+                // 右侧放一个同宽透明图标，让「图标+文本」整体真正居中（否则文本会被左侧图标挤偏）
+                val blank = resources.getDrawable(R.drawable.ic_blank, null)
+                setCompoundDrawablesWithIntrinsicBounds(d, null, blank, null)
+                compoundDrawablePadding = (8 * dp).toInt()
+            }
+            setOnClickListener { onClick() }
+        }
 
         box.addView(label("NightBoard68", 30f, fg, bold = true))
         box.addView(label("手机横过来，就是宿舍的 68 键蓝牙键盘", 14f, dim))
@@ -99,46 +130,55 @@ class MainActivity : Activity(), App.HidUi {
         status = label("", 16f)
         box.addView(status)
 
-        enableBt = Button(this).apply {
-            text = "打开蓝牙"
-            visibility = ViewGroup.GONE
-            setOnClickListener { startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), 2) }
-        }
-        box.addView(enableBt)
+        // 常用操作放最上面：设备很多时也不会被挤到下面
+        box.addView(mainBtn("开始打字", primary = true, icon = R.drawable.ic_keyboard, onClick = {
+            startActivity(Intent(this@MainActivity, KeyboardActivity::class.java))
+        }), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = (12 * dp).toInt() })
 
-        discoverBt = Button(this).apply {
-            text = "让电脑发现我（5 分钟）"
-            visibility = ViewGroup.GONE
-            setOnClickListener { startDiscoverable() }
-        }
-        box.addView(discoverBt)
+        box.addView(mainBtn("竖屏模式", icon = R.drawable.ic_smartphone, onClick = {
+            startActivity(Intent(this@MainActivity, OneHandActivity::class.java))
+        }), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = (10 * dp).toInt() })
+
+        box.addView(mainBtn("检查连接", icon = R.drawable.ic_refresh, onClick = {
+            app.hub.checkConnections()
+            status.text = "正在检查：局域网重新搜索电脑，蓝牙尝试回连…"
+            status.setTextColor(dim)
+        }), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = (10 * dp).toInt() })
+
+        enableBt = mainBtn("打开蓝牙", onClick = {
+            startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), 2)
+        }).apply { visibility = ViewGroup.GONE }
+        box.addView(enableBt, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).also { it.topMargin = (10 * dp).toInt() })
+
+        discoverBt = mainBtn("让电脑发现我（5 分钟）", onClick = { startDiscoverable() }).apply { visibility = ViewGroup.GONE }
+        box.addView(discoverBt, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).also { it.topMargin = (10 * dp).toInt() })
 
         deviceBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         box.addView(deviceBox)
 
-        box.addView(Button(this).apply {
-            text = "开始打字"
-            setOnClickListener { startActivity(Intent(this@MainActivity, KeyboardActivity::class.java)) }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = (12 * dp).toInt() })
+        // 电池优化豁免：部分 ROM 会杀掉前台服务所属进程，HID 注册随之重建，
+        // 用户感知为蓝牙频繁断连。豁免后进程受保护（连接日志里表现为成对的注册/注销事件消失）。
+        batteryBtn = mainBtn(
+            "申请电池优化豁免（防后台被杀导致断连）",
+            icon = R.drawable.ic_bolt,
+            onClick = {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName"))
+                )
+            },
+        ).apply { visibility = ViewGroup.GONE }
+        box.addView(batteryBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).also { it.topMargin = (10 * dp).toInt() })
 
-        box.addView(Button(this).apply {
-            text = "🖐 竖屏模式"
-            setOnClickListener { startActivity(Intent(this@MainActivity, OneHandActivity::class.java)) }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        box.addView(Button(this).apply {
-            text = "⟳ 检查连接（蓝牙 / 局域网）"
-            setOnClickListener {
-                app.hub.checkConnections()
-                status.text = "正在检查：局域网重新搜索电脑，蓝牙尝试回连…"
-                status.setTextColor(dim)
-            }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        box.addView(Button(this).apply {
-            text = "⚙ 设置（震动 / 亮度 / 局域网）"
-            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(mainBtn("设置（震动 / 亮度 / 局域网）", icon = R.drawable.ic_gear, onClick = {
+            startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+        }), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also { it.topMargin = (10 * dp).toInt() })
 
         box.addView(label("", 10f, dim))
         box.addView(label("首次使用（配对一次即可）：", 14f, fg, bold = true))
@@ -197,6 +237,13 @@ class MainActivity : Activity(), App.HidUi {
         Build.VERSION.SDK_INT < 31 ||
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
+    private fun batteryOptimizationIgnored(): Boolean = try {
+        (getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager)
+            .isIgnoringBatteryOptimizations(packageName)
+    } catch (_: Exception) {
+        true
+    }
+
     private fun ensurePermissionThenHid() {
         val perms = buildList {
             if (Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -213,6 +260,13 @@ class MainActivity : Activity(), App.HidUi {
     }
 
     private fun refresh() {
+        // 电池优化豁免按钮：未豁免时显示
+        batteryBtn.visibility = if (Build.VERSION.SDK_INT >= 23 && !batteryOptimizationIgnored()) {
+            ViewGroup.VISIBLE
+        } else {
+            ViewGroup.GONE
+        }
+
         // 模式按钮高亮 + 模式说明
         val activeBg = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(accent) }
         val normalBg = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(Color.parseColor("#1C232D")) }
@@ -295,27 +349,72 @@ class MainActivity : Activity(), App.HidUi {
         }
     }
 
+    /** 已配对电脑列表：默认收起（设备多时不挤占页面） */
+    private var devicesExpanded = false
+
+    /** 按蓝牙设备大类选真实设备图标（电脑/手机/耳机/键盘/鼠标/其他=蓝牙） */
+    private fun deviceIcon(d: android.bluetooth.BluetoothDevice): Int {
+        val cls = try { d.bluetoothClass } catch (_: SecurityException) { null } ?: return R.drawable.ic_bluetooth
+        return when (cls.majorDeviceClass) {
+            android.bluetooth.BluetoothClass.Device.Major.COMPUTER -> R.drawable.ic_computer
+            android.bluetooth.BluetoothClass.Device.Major.PHONE -> R.drawable.ic_smartphone
+            android.bluetooth.BluetoothClass.Device.Major.AUDIO_VIDEO -> R.drawable.ic_headset
+            android.bluetooth.BluetoothClass.Device.Major.PERIPHERAL -> when (cls.deviceClass) {
+                android.bluetooth.BluetoothClass.Device.PERIPHERAL_KEYBOARD -> R.drawable.ic_keyboard
+                android.bluetooth.BluetoothClass.Device.PERIPHERAL_POINTING -> R.drawable.ic_mouse
+                else -> R.drawable.ic_bluetooth
+            }
+            else -> R.drawable.ic_bluetooth
+        }
+    }
+
     private fun refreshDevices() {
         deviceBox.removeAllViews()
         val hosts = app.hid.bondedHosts()
         if (hosts.isEmpty()) return
-        val tip = TextView(this).apply {
-            text = "已配对的电脑（点一下重新连接）："
-            textSize = 13f
+        // 折叠头部：点一下展开 / 收起
+        deviceBox.addView(Button(this).apply {
+            text = if (devicesExpanded) "▾ 收起已配对的电脑（${hosts.size}）" else "▸ 已配对的电脑（${hosts.size}）"
+            background = GradientDrawable().apply { cornerRadius = 8 * dp; setColor(Color.parseColor("#1C232D")) }
             setTextColor(dim)
-        }
-        deviceBox.addView(tip)
+            setOnClickListener {
+                devicesExpanded = !devicesExpanded
+                refreshDevices()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also {
+            it.topMargin = (10 * dp).toInt()
+        })
+        if (!devicesExpanded) return
+        // 当前连接的主机（名字或地址），用于高亮
+        val current = app.hid.hostName()
         for (d in hosts) {
             val name = try { d.name } catch (_: SecurityException) { null } ?: d.address
+            val connected = name == current || d.address == current
             deviceBox.addView(Button(this).apply {
-                text = name
+                text = if (connected) "$name（当前连接）" else name
+                isAllCaps = false
+                textSize = 14f
+                minHeight = 0
+                minimumHeight = 0
+                gravity = Gravity.CENTER_VERTICAL
                 background = GradientDrawable().apply {
                     cornerRadius = 8 * dp
-                    setColor(Color.parseColor("#1C232D"))
+                    setColor(if (connected) accent else Color.parseColor("#1C232D"))
                 }
-                setTextColor(fg)
-                setOnClickListener { app.hid.connectHost(d) }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                setTextColor(if (connected) Color.parseColor("#0E1116") else fg)
+                val icon = resources.getDrawable(deviceIcon(d), null)
+                icon?.setTint(if (connected) Color.parseColor("#0E1116") else dim)
+                setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null)
+                compoundDrawablePadding = (8 * dp).toInt()
+                setOnClickListener {
+                    // 切换目标：已连接其他电脑时先断开再连（此前直接 connect 会被系统忽略）
+                    app.hid.switchHost(d)
+                    status.text = "正在连接 $name…"
+                    status.setTextColor(dim)
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).also {
+                it.topMargin = (8 * dp).toInt()
+            })
         }
     }
 }

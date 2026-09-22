@@ -54,6 +54,12 @@ class InputHub(
     /** 大写锁定状态取自当前模式的通道（电脑 LED 回传） */
     val capsOn: Boolean get() = if (mode == MODE_LAN) lan.capsOn else hid.capsOn
 
+    /** 数字锁定（NumLock）状态：电脑 LED 回传，主机权威 */
+    val numOn: Boolean get() = if (mode == MODE_LAN) lan.numOn else hid.numOn
+
+    /** 是否收到过 LED 状态（false = 未知，UI 不猜测显示） */
+    val ledKnown: Boolean get() = if (mode == MODE_LAN) lan.ledKnown else hid.ledKnown
+
     /** 状态条文案（横屏键盘 / 单手模式 / 通知栏 / 主页共用） */
     fun statusLine(): String = if (mode == MODE_LAN) {
         when {
@@ -79,7 +85,14 @@ class InputHub(
     }
 
     private fun send(event: (Channel) -> Boolean): Boolean {
-        val target = active() ?: return false
+        val target = active()
+        if (target == null) {
+            // 蓝牙模式下断连时收到输入 = 用户在打字：触发按键唤醒回连。
+            // 平板类 host 惯用「按需重连」——闲置后主动断链，等键盘下次按键再连；
+            // 不实现唤醒的话，搁置一会儿就彻底掉线，必须手动重连。
+            if (mode == MODE_BT) hid.wakeConnect()
+            return false
+        }
         return try {
             event(target)
         } catch (_: Exception) {
@@ -103,6 +116,43 @@ class InputHub(
         if (!send { c -> c.sendModDown(bits) }) return
         main.postDelayed({
             send { c -> c.sendModUp(bits) }
+        }, 70)
+    }
+
+    /**
+     * 瞬时发出「修饰键+普通键」组合并自动抬起（70ms）：
+     * 用于含普通键的热键，如 Ctrl+Space 切中英文、Win+Space 切输入法。
+     */
+    fun tapCombo(mods: Int, code: Int) {
+        if (mods != 0 && !send { c -> c.sendModDown(mods) }) return
+        if (!send { c -> c.sendKeyDown(code) }) {
+            if (mods != 0) send { c -> c.sendModUp(mods) }
+            return
+        }
+        main.postDelayed({
+            // 先键后修饰，与 HID 报告的抬起顺序一致
+            send { c -> c.sendKeyUp(code, 0) }
+            if (mods != 0) send { c -> c.sendModUp(mods) }
+        }, 70)
+    }
+
+    /**
+     * 瞬时发出「修饰键 + 多个普通键」组合并自动抬起（70ms）：
+     * 自定义组合键支持一次按下多个主键（如 Ctrl+Shift+Esc、Win+L+M）。
+     */
+    fun tapComboMulti(mods: Int, codes: List<Int>) {
+        if (codes.isEmpty()) return
+        if (codes.size == 1) {
+            tapCombo(mods, codes[0])
+            return
+        }
+        if (mods != 0 && !send { c -> c.sendModDown(mods) }) return
+        for (code in codes) {
+            if (!send { c -> c.sendKeyDown(code) }) return
+        }
+        main.postDelayed({
+            for (code in codes.asReversed()) send { c -> c.sendKeyUp(code, 0) }
+            if (mods != 0) send { c -> c.sendModUp(mods) }
         }, 70)
     }
 
@@ -150,6 +200,12 @@ class InputHub(
     fun sendMouse(dx: Int, dy: Int, wheel: Int, buttons: Int) {
         send { c -> c.sendMouseEvt(dx, dy, wheel, buttons) }
     }
+
+    /**
+     * 文本字符串发送（软键盘逐字传输）：只走局域网通道——蓝牙 HID 是按键码，
+     * 无法表达中文等任意字符；Agent 端按字符串直接打出。返回是否已发出。
+     */
+    fun sendText(text: String): Boolean = if (mode == MODE_LAN) lan.sendText(text) else false
 
     private fun Channel.sendModDown(bit: Int): Boolean = when (this) {
         Channel.LAN -> bitDownOverLan(bit)

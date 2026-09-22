@@ -39,6 +39,18 @@ object Hid {
     const val INSERT = 0x49; const val HOME = 0x4A; const val PGUP = 0x4B
     const val DELETE = 0x4C; const val END = 0x4D; const val PGDN = 0x4E
     const val RIGHT = 0x4F; const val LEFT = 0x50; const val DOWN = 0x51; const val UP = 0x52
+
+    // 数字小键盘（Keypad 页）：电脑端识别为小键盘键位
+    const val NUM_LOCK = 0x53   // NumLock
+    const val DIVIDE = 0x54     // 小键盘 /
+    const val MULTIPLY = 0x55   // 小键盘 *
+    const val SUBTRACT = 0x56   // 小键盘 -
+    const val ADD = 0x57        // 小键盘 +
+    const val KEYPAD_ENTER = 0x58   // 小键盘 Enter
+    const val NUMPAD_1 = 0x59; const val NUMPAD_2 = 0x5A; const val NUMPAD_3 = 0x5B
+    const val NUMPAD_4 = 0x5C; const val NUMPAD_5 = 0x5D; const val NUMPAD_6 = 0x5E
+    const val NUMPAD_7 = 0x5F; const val NUMPAD_8 = 0x60; const val NUMPAD_9 = 0x61
+    const val NUMPAD_0 = 0x62; const val NUMPAD_DOT = 0x63
 }
 
 /**
@@ -53,4 +65,54 @@ object Mods {
     const val RSHIFT = 0x20
     const val RALT = 0x40   // AltGr
     const val RGUI = 0x80
+}
+
+/**
+ * 字符 → (HID 键码, 修饰键位) 映射（美式键盘布局）。
+ * 软键盘实时输入用：逐字发送到电脑。无法通过 HID 表示的字符（中文等）返回 null。
+ */
+fun charToHid(c: Char): Pair<Int, Int>? {
+    val shift = Mods.LSHIFT
+    return when (c) {
+        in 'a'..'z' -> (Hid.A + (c - 'a')) to 0
+        in 'A'..'Z' -> (Hid.A + (c - 'A')) to shift
+        '0' -> Hid.NUM_0 to 0
+        in '1'..'9' -> (Hid.NUM_1 + (c - '1')) to 0
+        ' ' -> Hid.SPACE to 0
+        '\n' -> Hid.ENTER to 0
+        '\t' -> Hid.TAB to 0
+        '-' -> Hid.MINUS to 0
+        '_' -> Hid.MINUS to shift
+        '=' -> Hid.EQUAL to 0
+        '+' -> Hid.EQUAL to shift
+        '[' -> Hid.LBRACKET to 0
+        '{' -> Hid.LBRACKET to shift
+        ']' -> Hid.RBRACKET to 0
+        '}' -> Hid.RBRACKET to shift
+        '\\' -> Hid.BACKSLASH to 0
+        '|' -> Hid.BACKSLASH to shift
+        ';' -> Hid.SEMICOLON to 0
+        ':' -> Hid.SEMICOLON to shift
+        '\'' -> Hid.APOSTROPHE to 0
+        '"' -> Hid.APOSTROPHE to shift
+        '`' -> Hid.GRAVE to 0
+        '~' -> Hid.GRAVE to shift
+        ',' -> Hid.COMMA to 0
+        '<' -> Hid.COMMA to shift
+        '.' -> Hid.PERIOD to 0
+        '>' -> Hid.PERIOD to shift
+        '/' -> Hid.SLASH to 0
+        '?' -> Hid.SLASH to shift
+        '!' -> Hid.NUM_1 to shift
+        '@' -> Hid.NUM_2 to shift
+        '#' -> Hid.NUM_3 to shift
+        '$' -> Hid.NUM_4 to shift
+        '%' -> Hid.NUM_5 to shift
+        '^' -> Hid.NUM_6 to shift
+        '&' -> Hid.NUM_7 to shift
+        '*' -> Hid.NUM_8 to shift
+        '(' -> Hid.NUM_9 to shift
+        ')' -> Hid.NUM_0 to shift
+        else -> null
+    }
 }

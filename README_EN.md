@@ -15,8 +15,60 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
-> **Current version: v1.3.1** (based on upstream v1.2.1, version numbering aligned
-> with this repository). What's new in v1.3.1 (vs v1.3.0):
+> **Current version: v1.4.2** (based on upstream v1.2.1, version numbering aligned
+> with this repository). What's new in v1.4.2 (vs v1.4.1):
+>
+> - LAN: the Win key no longer goes dead. The agent injected LWin/RCtrl/RAlt/RWin
+>   as scan code + E0 prefix — where the E0 prefix is dropped by a keyboard
+>   filter chain, LWin (0x5B) has no standard meaning at all, while RCtrl/RAlt
+>   silently degrade to their left-side twins (breaking AltGr). All four now
+>   use VK injection, same as the editing cluster. **Update `NightBoardAgent.exe`
+>   to the v1.4.2 asset**; the APK only bumps the version number.
+> - Repo: the stale root `NightBoardAgent.exe` (pre-fix v1.3.x build) removed
+>   (#15); FAQ entries added for Smart App Control blocks and finding the agent
+>   in a source zip.
+>
+> What's new in v1.4.1 (vs v1.4.0), by
+> [@TeaClearInkII](https://github.com/TeaClearInkII) (PR #12/#13, see
+> [FIXLOG.md](FIXLOG.md) — **update NightBoardAgent.exe together with the APK**):
+>
+> - Bluetooth: first-keypress stuck-repeat after resume is fixed (dirty-flag +
+>   resync on reconnect, plus idle-resync for silently suspended links).
+> - LAN: arrow keys no longer type 8/2/4/6 (editing keys now injected via VK,
+>   NumLock-independent); random false disconnects and dead touchpad clicks fixed
+>   (heartbeat no longer fights the input queue); middle mouse button supported.
+> - NumLock/ScrollLock LED feedback; numpad "modify mode" keycaps; clearer
+>   admin-rights (UIPI) hint in the agent.
+>
+> What's new in v1.4.0 (vs v1.3.2):
+>
+> - **Numpad** — a real 4×5 keypad with Keypad-page HID codes, resizable floating
+>   layout, and NumLock-off hints driven by host LED state.
+> - **Soft keyboard** — type Chinese/any Unicode straight into the PC over LAN
+>   (new `txt` protocol in NightBoardAgent, Unicode injection); composition text
+>   is filtered; entry hidden in Bluetooth mode.
+> - **Touchpad** — hold a mouse-key column button and move to drag/select;
+>   resizable floating touchpad; fixed two-finger move event loss.
+> - **Combos & dialogs** — multi-primary-key custom combos with dedup, unified
+>   dark rounded PanelDialog framework, bottom-sheet style pickers.
+> - Plus: host-authoritative LED states, switchHost for paired-device switching,
+>   Mac key labels (⌃⌥⌘), portrait immersion/keep-screen-on, first-run
+>   long-press onboarding. **Update `NightBoardAgent.exe` together with the APK.**
+>
+> What's new in v1.3.2 (vs v1.3.1):
+>
+> - **Modifier/combo fixes** — hold Alt and tap Tab repeatedly to cycle through
+>   all background windows (held modifiers now persist across keystrokes and
+>   commit on finger lift); landscape Fn tap-latch works again; portrait
+>   reorder dialog no longer hijacks Alt-held combos; Caps Lock (double-Shift)
+>   survives the 中英/IME strip buttons.
+> - **Bluetooth stability** — phone-side auto-reconnect after host loss,
+>   lossless 10 ms coalescing of mouse reports on the Bluetooth channel,
+>   a battery-optimization exemption prompt, and a connection event log in
+>   Settings to diagnose disconnect patterns.
+> - New `CONTRIBUTING.md`; the `NightBoard68-mac` branch accepts PRs again.
+>
+> What's new in v1.3.1 (vs v1.3.0):
 >
 > - **Custom key widths** (PR #7 by [@pjh-bit](https://github.com/pjh-bit)) —
 >   select and horizontally resize any key, in both landscape and portrait;
@@ -176,6 +228,10 @@ so gaps between keys never drop a tap.
   with your phone model
 - If the touchpad scroll direction feels inverted, yell in an issue — it's a
   one-character fix
+- The Windows agent exe is unsigned, so Windows 11 **Smart App Control** may
+  block it ("application control policy has blocked this file"). The policy is
+  reputation-based, so behavior is intermittent — the same file may launch
+  fine after a while; locally built exes are unsigned too
 
 ## Acknowledgments
 

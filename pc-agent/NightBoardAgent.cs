@@ -7,7 +7,8 @@
 //   3. 通过 Win32 SendInput 注入成真实键鼠输入（等同于硬件键盘）
 //
 // 协议（手机→电脑）：{"t":"hello","n":"机型"} {"t":"kd","c":HID键码}
-//   {"t":"ku","c":HID键码} {"t":"m","dx":..,"dy":..,"w":..,"b":..} {"t":"ra"} {"t":"p","i":id}
+//   {"t":"ku","c":HID键码} {"t":"m","dx":..,"dy":..,"w":..,"b":..} {"t":"ra"}
+//   {"t":"txt","s":"任意Unicode文本(中文等)"} {"t":"p","i":id}
 // 协议（电脑→手机）：{"t":"po","i":id} {"t":"led","c":键盘灯位掩码} {"t":"disc","n":计算机名,"p":6868}
 //
 // 首次运行如 Windows 防火墙弹出提示，请勾选"专用网络"并允许，否则手机搜不到。
@@ -17,6 +18,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 
@@ -40,6 +42,15 @@ class NightBoardAgent
         Console.WriteLine("本机名: " + Environment.MachineName);
         Console.WriteLine("端口:   UDP " + DISCOVERY_PORT + " (发现) / TCP " + TRANSPORT_PORT + " (输入)");
         Console.WriteLine("退出:   关闭本窗口或按 Ctrl+C");
+        Console.WriteLine("----------------------------------------------");
+        bool isAdmin = IsAdministrator();
+        Console.WriteLine("权限:   " + (isAdmin ? "管理员（可向所有窗口注入输入）" : "普通（若目标程序以管理员权限运行将无法输入）"));
+        if (!isAdmin)
+        {
+            Console.WriteLine("提示:   某些程序（如以管理员运行的 IDE）普通权限无法注入输入，");
+            Console.WriteLine("        如需修复：右键本 exe → [以管理员身份运行]，");
+            Console.WriteLine("        或在文件属性 → 兼容性 → 勾选[以管理员身份运行此程序]。");
+        }
         Console.WriteLine("----------------------------------------------");
         Console.WriteLine("首次使用如弹出 Windows 防火墙提示，请点【允许】");
         Console.WriteLine("(勾选\"专用网络\")，否则手机搜不到本机。");
@@ -198,10 +209,79 @@ class NightBoardAgent
             case "ra":
                 ReleaseAllKeys();
                 break;
+            case "txt":
+                TypeText(UnescapeJson(GetStr(json, "s") ?? ""), verbose);
+                break;
             case "p":
                 SendToPhone("{\"t\":\"po\",\"i\":" + GetInt(json, "i") + "}");
                 break;
         }
+    }
+
+    // ---------- 文本注入（手机软键盘逐字发送，支持中文等任意 Unicode） ----------
+
+    /// 通过 SendInput KEYEVENTF_UNICODE 逐字输入。UTF-16 代理对（如 emoji）
+    /// 按两个码元连发，Windows 会自行拼合。
+    static void TypeText(string s, bool verbose)
+    {
+        if (string.IsNullOrEmpty(s)) return;
+        var list = new List<INPUT>(s.Length * 2);
+        foreach (char c in s)
+        {
+            var down = new INPUT();
+            down.type = 1; // INPUT_KEYBOARD
+            down.U.ki.wScan = c;
+            down.U.ki.dwFlags = KEYEVENTF_UNICODE;
+            list.Add(down);
+            var up = new INPUT();
+            up.type = 1;
+            up.U.ki.wScan = c;
+            up.U.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+            list.Add(up);
+        }
+        SendInputs(list.ToArray());
+        if (verbose) Log("txt " + s);
+    }
+
+    /// 手机端 JSON 字符串是转义过的（\" \\ \n 等），按标准规则反转义
+    static string UnescapeJson(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\\' && i + 1 < s.Length)
+            {
+                char n = s[++i];
+                switch (n)
+                {
+                    case '"': sb.Append('"'); break;
+                    case '\\': sb.Append('\\'); break;
+                    case '/': sb.Append('/'); break;
+                    case 'n': sb.Append('\n'); break;
+                    case 'r': sb.Append('\r'); break;
+                    case 't': sb.Append('\t'); break;
+                    case 'u':
+                        if (i + 4 < s.Length)
+                        {
+                            string hex = s.Substring(i + 1, 4);
+                            int code;
+                            if (int.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+                                System.Globalization.CultureInfo.InvariantCulture, out code))
+                            {
+                                sb.Append((char)code);
+                                i += 4;
+                                break;
+                            }
+                        }
+                        sb.Append('u');
+                        break;
+                    default: sb.Append(n); break;
+                }
+            }
+            else sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     // ---------- 键盘注入 ----------
@@ -299,25 +379,51 @@ class NightBoardAgent
         m[0x46] = new KeyDef(0, true, 0x2C);    // PrintScreen (VK_SNAPSHOT)
         m[0x47] = new KeyDef(0x46, false, 0);   // ScrollLock
         m[0x48] = new KeyDef(0, false, 0x13);   // Pause (VK_PAUSE)
-        m[0x49] = new KeyDef(0x52, true, 0);    // Insert
-        m[0x4A] = new KeyDef(0x47, true, 0);    // Home
-        m[0x4B] = new KeyDef(0x49, true, 0);    // PgUp
-        m[0x4C] = new KeyDef(0x53, true, 0);    // Delete
-        m[0x4D] = new KeyDef(0x4F, true, 0);    // End
-        m[0x4E] = new KeyDef(0x51, true, 0);    // PgDn
-        m[0x4F] = new KeyDef(0x4D, true, 0);    // Right
-        m[0x50] = new KeyDef(0x4B, true, 0);    // Left
-        m[0x51] = new KeyDef(0x50, true, 0);    // Down
-        m[0x52] = new KeyDef(0x48, true, 0);    // Up
+        // 编辑键区（Insert~Up）：一律走 VK 注入而非扫描码。
+        // 扫描码方案靠 E0(EXTENDEDKEY) 前缀区分方向键与小键盘 8/2/4/6，
+        // 但某些环境下 E0 前缀不生效，方向键会被当成小键盘 → NumLock 开时输出数字。
+        // VK 与 NumLock 无关、跨键盘布局稳定。
+        m[0x49] = new KeyDef(0, false, 0x2D);   // Insert (VK_INSERT)
+        m[0x4A] = new KeyDef(0, false, 0x24);   // Home (VK_HOME)
+        m[0x4B] = new KeyDef(0, false, 0x21);   // PgUp (VK_PRIOR)
+        m[0x4C] = new KeyDef(0, false, 0x2E);   // Delete (VK_DELETE)
+        m[0x4D] = new KeyDef(0, false, 0x23);   // End (VK_END)
+        m[0x4E] = new KeyDef(0, false, 0x22);   // PgDn (VK_NEXT)
+        m[0x4F] = new KeyDef(0, false, 0x27);   // Right (VK_RIGHT)
+        m[0x50] = new KeyDef(0, false, 0x25);   // Left (VK_LEFT)
+        m[0x51] = new KeyDef(0, false, 0x28);   // Down (VK_DOWN)
+        m[0x52] = new KeyDef(0, false, 0x26);   // Up (VK_UP)
+        // 数字小键盘 (HID 0x53..0x63)：Set1 扫描码与主键盘数字键区共用，
+        // 实际输出方向/数字由电脑端 NumLock 决定（蓝牙 HID 同样如此）
+        m[0x53] = new KeyDef(0x45, false, 0);   // NumLk
+        m[0x54] = new KeyDef(0x35, false, 0);   // 小键盘 /
+        m[0x55] = new KeyDef(0x37, false, 0);   // 小键盘 *
+        m[0x56] = new KeyDef(0x4A, false, 0);   // 小键盘 -
+        m[0x57] = new KeyDef(0x4E, false, 0);   // 小键盘 +
+        m[0x58] = new KeyDef(0x1C, true, 0);    // 小键盘 Enter
+        m[0x59] = new KeyDef(0x47, false, 0);   // 7
+        m[0x5A] = new KeyDef(0x48, false, 0);   // 8
+        m[0x5B] = new KeyDef(0x49, false, 0);   // 9
+        m[0x5C] = new KeyDef(0x4B, false, 0);   // 4
+        m[0x5D] = new KeyDef(0x4C, false, 0);   // 5
+        m[0x5E] = new KeyDef(0x4D, false, 0);   // 6
+        m[0x5F] = new KeyDef(0x4F, false, 0);   // 1
+        m[0x60] = new KeyDef(0x50, false, 0);   // 2
+        m[0x61] = new KeyDef(0x51, false, 0);   // 3
+        m[0x62] = new KeyDef(0x52, false, 0);   // 0
+        m[0x63] = new KeyDef(0x53, false, 0);   // .
         // 修饰键 (HID 0xE0..0xE7)
         m[0xE0] = new KeyDef(0x1D, false, 0);   // LCtrl
         m[0xE1] = new KeyDef(0x2A, false, 0);   // LShift
         m[0xE2] = new KeyDef(0x38, false, 0);   // LAlt
-        m[0xE3] = new KeyDef(0x5B, true, 0);    // LWin
-        m[0xE4] = new KeyDef(0x1D, true, 0);    // RCtrl
+        // LWin/RCtrl/RAlt/RWin 原走扫描码+E0：E0 被键盘过滤链丢弃时
+        // LWin(0x5B) 无标准无 E0 含义 → Win 键彻底失灵，RCtrl/RAlt 静默
+        // 退化成左键（AltGr 失效）。与编辑键区同理改 VK 注入。
+        m[0xE3] = new KeyDef(0, false, 0x5B);   // LWin (VK_LWIN)
+        m[0xE4] = new KeyDef(0, false, 0xA3);   // RCtrl (VK_RCONTROL)
         m[0xE5] = new KeyDef(0x36, false, 0);   // RShift
-        m[0xE6] = new KeyDef(0x38, true, 0);    // RAlt (AltGr)
-        m[0xE7] = new KeyDef(0x5C, true, 0);    // RWin
+        m[0xE6] = new KeyDef(0, false, 0xA4);   // RAlt (VK_RMENU / AltGr)
+        m[0xE7] = new KeyDef(0, false, 0x5C);   // RWin (VK_RWIN)
         return m;
     }
 
@@ -328,7 +434,7 @@ class NightBoardAgent
         lock (keyLock) pressed.Add(hid);
         SendKey(d, false);
         StartRepeat(hid);
-        if (hid == 0x39) PostLed();   // CapsLock 状态可能翻转
+        if (IsLedToggle(hid)) PostLed();   // CapsLock/NumLock/ScrollLock 状态可能翻转
         if (verbose) Log("kd " + hid.ToString("X2"));
     }
 
@@ -339,8 +445,15 @@ class NightBoardAgent
         StopRepeat(hid);
         lock (keyLock) pressed.Remove(hid);
         SendKey(d, true);
-        if (hid == 0x39) PostLed();
+        if (IsLedToggle(hid)) PostLed();
         if (verbose) Log("ku " + hid.ToString("X2"));
+    }
+
+    /// 切换后会影响键盘灯（LED）状态的键：CapsLock 0x39 / ScrollLock 0x47 / NumLock 0x53。
+    /// 只有 CapsLock 回传 LED 会导致手机端 Num/Scroll 状态在切换后不更新。
+    static bool IsLedToggle(int hid)
+    {
+        return hid == 0x39 || hid == 0x47 || hid == 0x53;
     }
 
     static void SendKey(KeyDef d, bool up)
@@ -420,6 +533,13 @@ class NightBoardAgent
             i.U.mi.dwFlags = ((buttons & 2) != 0) ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
             list.Add(i);
         }
+        // 中键：手机端鼠标键列"中"= bit2(4)，此前只处理 bit0/1 导致 LAN 中键完全无效
+        if ((buttons & 4) != (prevButtons & 4))
+        {
+            var i = new INPUT(); i.type = 0;
+            i.U.mi.dwFlags = ((buttons & 4) != 0) ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP;
+            list.Add(i);
+        }
         prevButtons = buttons;
 
         if (list.Count > 0)
@@ -434,7 +554,11 @@ class NightBoardAgent
         uint n = SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT)));
         if (n == 0)
         {
-            Log("SendInput 被系统拦截（返回0，Win32错误码 " + Marshal.GetLastWin32Error() + "）");
+            int err = Marshal.GetLastWin32Error();
+            string hint = "";
+            if (err == 5)   // ERROR_ACCESS_DENIED：UIPI——前台窗口以管理员权限运行，本进程普通权限无法注入
+                hint = "（前台程序可能以管理员权限运行，请右键本 exe → 以管理员身份运行 后重试）";
+            Log("SendInput 被系统拦截（返回0，Win32错误码 " + err + "）" + hint);
         }
     }
 
@@ -506,16 +630,33 @@ class NightBoardAgent
         Console.WriteLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg);
     }
 
+    /// 当前进程是否拥有管理员权限（决定能否向管理员权限运行的窗口注入输入）
+    static bool IsAdministrator()
+    {
+        try
+        {
+            using (var id = WindowsIdentity.GetCurrent())
+            {
+                var p = new WindowsPrincipal(id);
+                return p.IsInRole(WindowsBuiltInRole.Administrator);
+            }
+        }
+        catch { return false; }
+    }
+
     // ---------- Win32 ----------
 
     const uint KEYEVENTF_EXTENDEDKEY = 0x1000;
     const uint KEYEVENTF_KEYUP = 0x0002;
     const uint KEYEVENTF_SCANCODE = 0x0008;
+    const uint KEYEVENTF_UNICODE = 0x0004;
     const uint MOUSEEVENTF_MOVE = 0x0001;
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     const uint MOUSEEVENTF_LEFTUP = 0x0004;
     const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
     const uint MOUSEEVENTF_WHEEL = 0x0800;
 
     [StructLayout(LayoutKind.Sequential)]

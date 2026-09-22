@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.Executor
 
@@ -40,9 +41,15 @@ class HidKeyboard(
     private val main = Handler(Looper.getMainLooper())
     private val prefs = appContext.getSharedPreferences("nightboard", Context.MODE_PRIVATE)
 
-    /** 电脑端大写锁定状态（由 LED output report 回传） */
+    /** 电脑端 LED 状态（由 LED output report 回传；主机权威，未收到不猜测） */
     @Volatile
     var capsOn = false
+        private set
+    @Volatile
+    var numOn = false
+        private set
+    @Volatile
+    var ledKnown = false
         private set
 
     val adapter: BluetoothAdapter?
@@ -125,6 +132,13 @@ class HidKeyboard(
                 } catch (_: SecurityException) {
                 }
                 main.post { listener.onHostChanged(safeName(device)) }
+                // 重连建立后与电脑端重新同步键盘状态，防止上次 keyUp/发送失败未送达导致卡键连发：
+                // 手机端已无按键 → 补发空报告解除电脑端卡键；手指仍按着 → 补发真实状态对齐
+                synchronized(lock) {
+                    if (dirty || heldMods != 0 || oneShotMods != 0 || keys.any { it != 0 }) {
+                        sync()
+                    }
+                }
             } else if (host == device) {
                 host = null
                 logConn("电脑断开连接：${safeName(device) ?: "未知设备"}")
@@ -134,11 +148,16 @@ class HidKeyboard(
         }
 
         override fun onSetReport(device: BluetoothDevice, type: Byte, reportId: Byte, data: ByteArray) {
-            // LED output report：bit0 NumLock、bit1 CapsLock、bit2 ScrollLock
+            // LED output report：bit0 NumLock、bit1 CapsLock、bit2 ScrollLock（主机权威）
             if (type == BluetoothHidDevice.REPORT_TYPE_OUTPUT && data.isNotEmpty()) {
-                val caps = (data[0].toInt() and 0x02) != 0
-                if (caps != capsOn) {
+                val mask = data[0].toInt()
+                val caps = (mask and 0x02) != 0
+                val num = (mask and 0x01) != 0
+                val wasKnown = ledKnown
+                ledKnown = true
+                if (caps != capsOn || num != numOn || !wasKnown) {
                     capsOn = caps
+                    numOn = num
                     main.post { listener.onLedsChanged() }
                 }
             }
@@ -205,6 +224,29 @@ class HidKeyboard(
         false
     }
 
+    /**
+     * 切换连接目标：已连接其他电脑时先断开，再让自动回连去连新目标。
+     * （HID profile 同时只维持一台主机，不断开旧主机直接 connect 新设备会被系统忽略）
+     */
+    fun switchHost(device: BluetoothDevice): Boolean {
+        val current = host
+        if (current == null || current.address == device.address) return connectHost(device)
+        val d = hidDevice ?: return false
+        logConn("断开当前连接，切换目标：${safeName(device) ?: device.address}")
+        cancelReconnect()   // 重置回连计数，断开回调会重新排程
+        try {
+            d.disconnect(current)
+        } catch (_: SecurityException) {
+            return false
+        }
+        // 先把回连目标指向新电脑：断开回调触发的自动回连会直接去连新目标
+        try {
+            prefs.edit().putString("last_host_mac", device.address).apply()
+        } catch (_: SecurityException) {
+        }
+        return true
+    }
+
     /** 注册成功后自动回连上次连接过的电脑（设置里可关） */
     private fun autoReconnect() {
         if (!prefs.getBoolean("auto_reconnect", true)) return
@@ -263,6 +305,29 @@ class HidKeyboard(
         scheduleReconnect()   // 连上了会被 cancelReconnect 清掉；没连上继续下一轮
     }
 
+    /**
+     * 按键唤醒回连：平板类 host（iPad / 安卓平板）普遍采用「按需重连」省电策略——
+     * 闲置一段时间后主动断开 ACL 链路，等键盘下次按键时由键盘侧重新 connect。
+     * 断连自动回连的轮次（约 70s）远覆盖不了这类闲置断链，真正的键盘都实现了
+     * 按键唤醒；这里在断连状态下收到输入时补一次立即回连（5s 节流）。
+     */
+    fun wakeConnect() {
+        if (host != null) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastWakeAt < WAKE_CONNECT_THROTTLE_MS) return
+        lastWakeAt = now
+        if (!prefs.getBoolean("auto_reconnect", true)) return
+        val a = adapter
+        if (a == null || !a.isEnabled) {
+            logConn("按键唤醒跳过：蓝牙未开启")
+            return
+        }
+        logConn("收到输入，按键唤醒回连…")
+        connectBondedHost()
+    }
+
+    private var lastWakeAt = 0L
+
     // ---------- 连接事件日志（设置页可见，诊断蓝牙断连规律） ----------
 
     private val connLog = ArrayDeque<String>()
@@ -308,6 +373,11 @@ class HidKeyboard(
     private var heldMods = 0      // 物理按住的修饰键（Win 键等）
     private var oneShotMods = 0   // 点按锁存的修饰键（一次性）
     private val keys = IntArray(6)
+    /** 报告状态与电脑端可能不一致（发送失败/连接未就绪），需在连接恢复后补发 */
+    private var dirty = false
+    /** 上次成功发送的时刻（uptimeMillis）。检测「假连接」：链路半挂起时 sendReport
+     *  不抛异常也不会触发断连回调，此时 keyDown 前主动补发一次对齐，堵住卡键连发墙角 */
+    private var lastOkSyncAt = 0L
 
     fun modDown(bit: Int) = synchronized(lock) {
         heldMods = heldMods or bit
@@ -340,6 +410,14 @@ class HidKeyboard(
 
     fun keyDown(code: Int, latchedMods: Int) = synchronized(lock) {
         if (code <= 0) return
+        // 假连接兜底：距上次成功发送太久（期间无交互），发送前先补发一次当前状态对齐电脑端。
+        // 覆盖「链路半挂起、sendReport 不抛异常、断连回调也不来」时 keyUp 未送达的卡键连发；
+        // 发送失败会进 dirty，靠重连补发；成功则对齐，两路兜底互通。
+        if (!dirty && host != null && hidDevice != null &&
+            SystemClock.uptimeMillis() - lastOkSyncAt > RESYNC_IDLE_MS
+        ) {
+            sync()
+        }
         oneShotMods = latchedMods
         if (keys.indexOf(code) < 0) {
             val slot = keys.indexOf(0)
@@ -365,15 +443,25 @@ class HidKeyboard(
     }
 
     private fun sync() {
-        val h = host ?: return
-        val d = hidDevice ?: return
+        val h = host ?: run {
+            // 连接未就绪：记 dirty，连接恢复时补发，避免电脑端收不到抬起而卡键连发
+            dirty = true
+            return
+        }
+        val d = hidDevice ?: run {
+            dirty = true
+            return
+        }
         report[0] = (heldMods or oneShotMods).toByte()
         report[1] = 0
         for (i in 0 until 6) report[2 + i] = keys[i].toByte()
         try {
             d.sendReport(h, REPORT_ID_KEYBOARD, report)
+            dirty = false
+            lastOkSyncAt = SystemClock.uptimeMillis()
         } catch (e: Exception) {
             Log.w(TAG, "sendReport 失败", e)
+            dirty = true
         }
     }
 
@@ -381,20 +469,65 @@ class HidKeyboard(
 
     private val mouseReport = ByteArray(4)
 
+    // 蓝牙通道鼠标报告合并：触摸屏采样率可达 120Hz+，快速拖动时逐事件直发会在
+    // HID 中断通道上形成小包洪峰（每条一次 Binder IPC + ACL 分组），链路拥挤时
+    // 与 WiFi 共存调度叠加可能诱发断连。位移/滚轮是相对量，窗口内合并发送完全
+    // 无损；按键是电平取最新值。按钮状态变化立即发出（点击不延迟）。
+    private var pendingMdx = 0
+    private var pendingMdy = 0
+    private var pendingMwheel = 0
+    private var pendingMbuttons = 0
+    private var lastMouseButtons = 0
+    private var lastMouseSentAt = 0L
+    private var mouseFlushPosted = false
+    private val mouseFlushRun = Runnable {
+        synchronized(lock) {
+            mouseFlushPosted = false
+            if (pendingMdx != 0 || pendingMdy != 0 || pendingMwheel != 0 ||
+                pendingMbuttons != lastMouseButtons
+            ) flushMouseNow()
+        }
+    }
+
     /** buttons: bit0 左键、bit1 右键；dx/dy/wheel: 相对位移，-127..127 */
     fun sendMouse(dx: Int, dy: Int, wheel: Int, buttons: Int) {
         synchronized(lock) {
-            val h = host ?: return
-            val d = hidDevice ?: return
-            mouseReport[0] = buttons.toByte()
-            mouseReport[1] = dx.coerceIn(-127, 127).toByte()
-            mouseReport[2] = dy.coerceIn(-127, 127).toByte()
-            mouseReport[3] = wheel.coerceIn(-127, 127).toByte()
-            try {
-                d.sendReport(h, REPORT_ID_MOUSE, mouseReport)
-            } catch (e: Exception) {
-                Log.w(TAG, "sendMouse 失败", e)
+            pendingMdx += dx
+            pendingMdy += dy
+            pendingMwheel += wheel
+            pendingMbuttons = buttons
+            val now = SystemClock.elapsedRealtime()
+            val needNow = buttons != lastMouseButtons ||
+                now - lastMouseSentAt >= MOUSE_COALESCE_MS ||
+                Math.abs(pendingMdx) + Math.abs(pendingMdy) > 120 ||
+                Math.abs(pendingMwheel) > 100   // 合并会溢出 ±127，提前冲销防丢位移
+            if (needNow) {
+                main.removeCallbacks(mouseFlushRun)
+                mouseFlushPosted = false
+                flushMouseNow(now)
+            } else if (!mouseFlushPosted) {
+                mouseFlushPosted = true
+                main.postDelayed(mouseFlushRun, Math.max(1L, lastMouseSentAt + MOUSE_COALESCE_MS - now))
             }
+        }
+    }
+
+    private fun flushMouseNow(now: Long = SystemClock.elapsedRealtime()) {
+        lastMouseSentAt = now
+        lastMouseButtons = pendingMbuttons
+        val dx = pendingMdx; val dy = pendingMdy
+        val wheel = pendingMwheel; val buttons = pendingMbuttons
+        pendingMdx = 0; pendingMdy = 0; pendingMwheel = 0
+        val h = host ?: return
+        val d = hidDevice ?: return
+        mouseReport[0] = buttons.toByte()
+        mouseReport[1] = dx.coerceIn(-127, 127).toByte()
+        mouseReport[2] = dy.coerceIn(-127, 127).toByte()
+        mouseReport[3] = wheel.coerceIn(-127, 127).toByte()
+        try {
+            d.sendReport(h, REPORT_ID_MOUSE, mouseReport)
+        } catch (e: Exception) {
+            Log.w(TAG, "sendMouse 失败", e)
         }
     }
 
@@ -410,5 +543,10 @@ class HidKeyboard(
         private const val REPORT_ID_MOUSE = 2
         private const val CONN_LOG_LINES = 30
         private val RECONNECT_DELAYS_MS = longArrayOf(3000L, 8000L, 20000L, 40000L)
+        private const val MOUSE_COALESCE_MS = 10L
+        /** 距上次成功发送超过该时长（无交互）时，keyDown 前先补发一次状态对齐电脑端，
+         *  兜底「假连接」（链路半挂起、不抛异常也不断连）导致的卡键连发 */
+        private const val RESYNC_IDLE_MS = 3000L
+        private const val WAKE_CONNECT_THROTTLE_MS = 5000L
     }
 }

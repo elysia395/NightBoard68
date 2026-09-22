@@ -34,7 +34,7 @@ class Key(
  *  R4: LShift Z-/ RShift ↑ End                      (14)
  *  R5: LCtrl Win LAlt Space RAlt Fn RCtrl ← ↓ →     (10)
  *
- * Fn 层：数字排变 F1-F12，Esc→`，Del→PrtSc，PgUp/PgDn→Home/End，End→Home
+ * Fn 层：数字排变 F1-F12，Esc→`，Del→PrtSc，PgUp→Ins，End→Home（PgDn 无 Fn 层）
  */
 object Layout68 {
 
@@ -42,7 +42,7 @@ object Layout68 {
 
     val rows: List<List<Key>> = listOf(
         listOf(
-            Key("Esc", Hid.ESC, fnLabel = "~", fnCode = Hid.GRAVE),
+            Key("Esc", Hid.ESC, fnLabel = "`", fnCode = Hid.GRAVE),
             Key("1", Hid.NUM_1, fnLabel = "F1", fnCode = Hid.F1),
             Key("2", Hid.NUM_2, fnLabel = "F2", fnCode = Hid.F2),
             Key("3", Hid.NUM_3, fnLabel = "F3", fnCode = Hid.F3),
@@ -65,7 +65,7 @@ object Layout68 {
             letter("O", Hid.O), letter("P", Hid.P),
             Key("[", Hid.LBRACKET), Key("]", Hid.RBRACKET),
             Key("\\", Hid.BACKSLASH, 1.5f),
-            Key("PgUp", Hid.PGUP, fnLabel = "Home", fnCode = Hid.HOME),
+            Key("PgUp", Hid.PGUP, fnLabel = "Ins", fnCode = Hid.INSERT),
         ),
         listOf(
             Key("Caps", Hid.CAPSLOCK, 1.75f),

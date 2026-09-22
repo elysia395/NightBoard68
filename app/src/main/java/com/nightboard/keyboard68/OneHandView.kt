@@ -1,7 +1,6 @@
 package com.nightboard.keyboard68
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -63,6 +62,30 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     private val hapticAmp = prefs.getInt("haptic_amp", 140)
     private val modHold = prefs.getBoolean("mod_hold", false)
 
+    // ---------- Mac 键位（设置页"键盘布局"切换，win = Windows/Linux） ----------
+    private val isMacLayout get() = prefs.getString("keyboard_layout", "win") == "mac"
+
+    /** Mac 模式：左 Alt 发 Command(⌘)、左 Win 发 Option(⌥)，与 Mac 键盘手位一致；其余位不变 */
+    private fun modBit(k: Key): Int {
+        if (!isMacLayout) return k.modBit
+        return when (k.modBit) {
+            Mods.LALT -> Mods.LGUI
+            Mods.LGUI -> Mods.LALT
+            else -> k.modBit
+        }
+    }
+
+    /** Mac 模式修饰键标签（⌃⌥⌘） */
+    private fun modLabel(k: Key): String {
+        if (!isMacLayout) return k.label
+        return when (k.modBit) {
+            Mods.LCTRL, Mods.RCTRL -> "⌃"
+            Mods.LALT, Mods.RALT -> "⌥"
+            Mods.LGUI -> "⌘"
+            else -> k.label
+        }
+    }
+
     private var caps: List<Cap> = emptyList()
     private var stripButtons: List<StripBtn> = emptyList()
     private var padRect = RectF()
@@ -109,6 +132,8 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     // 竖屏键宽编辑：与横屏使用独立前缀，避免两套布局互相影响
     private var layoutEditMode = false
     private val keyWidthScales = HashMap<String, Float>()
+    /** 进入编辑态时的键宽快照：点「取消」退出编辑时回滚到编辑前状态 */
+    private val editStartScales = HashMap<String, Float>()
     private var resizePointerId = INVALID_POINTER_ID
     private var resizingKeyId: String? = null
     private var selectedKeyId: String? = null
@@ -118,6 +143,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     // 颜色（与横屏键盘一致）
     private val colorBg = Color.parseColor("#0E1116")
     private val colorKey = Color.parseColor("#1C232D")
+    private val colorLetter = Color.parseColor("#232C38")   // 26 字母键：稍浅便于定位
     private val colorKeyPressed = Color.parseColor("#334152")
     private val colorKeyLatched = Color.parseColor("#3A2F1E")
     private val colorText = Color.parseColor("#E6EAF0")
@@ -151,7 +177,10 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         pad = dp(6f)
         gap = dp(4f)
         radius = dp(9f)
-        stripH = dp(34f)
+        // 顶部边距（设置页可调，避开前置摄像头/挖孔）：状态条和键盘整体下移，底部留出同高空白
+        val topInset = dp(prefs.getInt("onehand_top_margin", 0).toFloat())
+        val stripBaseH = dp(34f)
+        stripH = stripBaseH + topInset
 
         unit = (w - pad * 2 - gap * 9) / 10f
         keyH = (unit * 1.55f).coerceAtMost(dp(72f))
@@ -161,6 +190,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
 
         // 从底部往上堆：数字行 + 4 行字母 → F 行 → 符号行 → 自定义行 → 修饰键行
         // 剩余高度全部给触摸板（比旧版更紧凑，键盘整体抬高）
+        // 顶部边距只让状态条+内容整体下移（stripH 已含 topInset），底部不再留白，触摸板自动变短
         val nTop = h - pad - 5 * keyH - 4 * gap
         val qTop = nTop + keyH + gap
         val fTop = nTop - gap - fH
@@ -285,7 +315,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         // 顶部快捷按钮：从右往左排
         val btnDefs = if (layoutEditMode) {
             listOf(
-                Triple("✕", BTN_EXIT, dp(34f)),
+                Triple("取消", BTN_EXIT, dp(52f)),
                 Triple("完成", BTN_LAYOUT, dp(52f)),
                 Triple("重置", BTN_LAYOUT_RESET, dp(52f)),
             )
@@ -299,7 +329,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             )
         }
         val btnH = dp(24f)
-        val btnY = (stripH - btnH) / 2f
+        val btnY = topInset + (stripBaseH - btnH) / 2f
         var xr = w - pad - dp(2f)
         val btns = ArrayList<StripBtn>(btnDefs.size)
         for ((label, id, bw) in btnDefs) {
@@ -344,14 +374,14 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         drawStrip(canvas)
         drawTouchpad(canvas)
 
-        val mainSize = minOf(keyH * 0.30f, unit * 0.36f)
+        val mainSize = minOf(keyH * 0.30f, unit * 0.36f) * prefs.getFloat("key_text_scale", 1f).coerceIn(0.7f, 1.6f)
         val smallSize = mainSize * 0.8f
 
         for (c in caps) {
             val k = c.key
             val editing = layoutEditMode && c.prefKey == selectedKeyId
             val pressed = pointerCaps.containsValue(c)
-            val latched = k != null && k.isModifier && k.modBit != Mods.LGUI && k in latchedMods
+            val latched = k != null && k.isModifier && modBit(k) != Mods.LGUI && k in latchedMods
             val locked = k != null && k.isModifier &&
                 (k.modBit == Mods.LSHIFT || k.modBit == Mods.RSHIFT) &&
                 (lockedBits and k.modBit) != 0
@@ -373,9 +403,9 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 }
                 canvas.drawRoundRect(c.rect, radius, radius, paintStroke)
                 val label = if (layoutEditMode) {
-                    s?.let { ShortcutStore.labelFor(it.mods, it.code) } ?: "快捷${c.customSlot + 1}"
+                    s?.let { store.labelFor(it.mods, it.code) } ?: "快捷${c.customSlot + 1}"
                 } else {
-                    s?.let { ShortcutStore.labelFor(it.mods, it.code) } ?: "＋"
+                    s?.let { store.labelFor(it.mods, it.code) } ?: "＋"
                 }
                 if (label.isNotEmpty()) {
                     paintText.color = when {
@@ -404,10 +434,13 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             }
 
             val key = k!!
+            // 26 字母键用稍浅底色，便于盲打定位
+            val isLetter = key.label.length == 1 && key.label[0] in 'A'..'Z'
             paintFill.color = when {
                 editing -> colorKeyLatched
                 pressed -> colorKeyPressed
                 latched -> colorKeyLatched
+                isLetter -> colorLetter
                 else -> colorKey
             }
             canvas.drawRoundRect(c.rect, radius, radius, paintFill)
@@ -423,7 +456,8 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                     dp(2f), dp(2f), paintFill,
                 )
             }
-            val visibleLabel = if (layoutEditMode && key.label.isEmpty()) "空格" else key.label
+            val shownBase = if (key.isModifier) modLabel(key) else key.label
+            val visibleLabel = if (layoutEditMode && shownBase.isEmpty()) "空格" else shownBase
             if (visibleLabel.isNotEmpty()) {
                 paintText.color = when {
                     editing -> colorAccent
@@ -471,7 +505,9 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         }
         paintStrip.color = if (layoutEditMode || hub.btConnected || hub.lanConnected) colorAccent else colorDim
         paintStrip.textSize = dp(13f)
-        canvas.drawText(status, pad + dp(4f), stripH / 2f + dp(5f), paintStrip)
+        // 状态文本与按钮一样从顶部边距下开始（与 computeLayout 的 topInset 保持一致）
+        val topInset = dp(prefs.getInt("onehand_top_margin", 0).toFloat())
+        canvas.drawText(status, pad + dp(4f), topInset + dp(17f) + dp(5f), paintStrip)
 
         for (b in stripButtons) {
             val active = b.id == BTN_LAYOUT && layoutEditMode
@@ -516,7 +552,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         canvas.drawText("触 摸 板", padRect.centerX(), padRect.centerY() - dp(8f), paintText)
         paintText.textSize = dp(11f)
         canvas.drawText(
-            "单指移动 · 轻点=左键 · 长按=右键 · 右缘条/双指上下滑=滚动",
+            "单指移动 · 轻点=左键 · 双指=右键 · 长按拖动 · 右缘条/双指上下滑=滚动",
             padRect.centerX(),
             padRect.centerY() + dp(14f),
             paintText,
@@ -604,6 +640,8 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             BTN_LAND -> {
                 releaseAll()
                 context.startActivity(Intent(context, KeyboardActivity::class.java))
+                // 切换后关闭当前页：返回键回到主界面，而不是回到上一个键盘布局
+                (context as Activity).finish()
             }
             BTN_MODE -> {
                 // 蓝牙/局域网 独立模式一键切换
@@ -615,7 +653,10 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
             }
             BTN_LAYOUT -> {
                 finishLayoutResize(save = true)
-                if (!layoutEditMode) releaseAll()
+                if (!layoutEditMode) {
+                    releaseAll()
+                    beginLayoutEdit()
+                }
                 layoutEditMode = !layoutEditMode
                 selectedKeyId = null
                 computeLayout()
@@ -626,7 +667,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 computeLayout()
             }
             BTN_CHECK -> hub.checkConnections()
-            BTN_EXIT -> (context as Activity).finish()
+            BTN_EXIT -> if (layoutEditMode) cancelLayoutEdit() else (context as Activity).finish()
         }
         invalidate()
     }
@@ -695,6 +736,28 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         selectedKeyId = null
     }
 
+    /** 进入布局编辑前快照当前键宽，供「取消」回滚 */
+    private fun beginLayoutEdit() {
+        editStartScales.clear()
+        for ((k, v) in prefs.all) {
+            if (k.startsWith(KEY_WIDTH_PREF_PREFIX) && v is Float) editStartScales[k] = v
+        }
+    }
+
+    /** 取消布局编辑：回滚到进入编辑态前的键宽并退出编辑（区别于「完成」保留修改） */
+    private fun cancelLayoutEdit() {
+        finishLayoutResize(save = false)
+        val edit = prefs.edit()
+        for (k in prefs.all.keys) if (k.startsWith(KEY_WIDTH_PREF_PREFIX)) edit.remove(k)
+        for ((k, v) in editStartScales) edit.putFloat(k, v)
+        edit.apply()
+        keyWidthScales.clear()
+        layoutEditMode = false
+        selectedKeyId = null
+        computeLayout()
+        invalidate()
+    }
+
     private fun keyWidthScale(prefKey: String): Float = keyWidthScales.getOrPut(prefKey) {
         prefs.getFloat(prefKey, DEFAULT_KEY_WIDTH_SCALE).coerceIn(MIN_KEY_WIDTH_SCALE, MAX_KEY_WIDTH_SCALE)
     }
@@ -704,7 +767,7 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
     private fun capName(cap: Cap): String = when {
         cap.customSlot >= 0 -> "快捷${cap.customSlot + 1}"
         cap.key?.label.isNullOrEmpty() -> "空格"
-        else -> cap.key!!.label
+        else -> cap.key!!.let { if (it.isModifier) modLabel(it) else it.label }
     }
 
     // ---------- 键盘触控 ----------
@@ -758,9 +821,10 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         // （按住 Alt 准备 Alt+Tab 时，不能在 550ms 后弹出换位对话框劫持组合）
         cancelOtherModRowLongPresses(pid)
         when {
-            k.isModifier && (modHold || k.modBit == Mods.LGUI) -> {
-                pointerHeldMods[pid] = k.modBit
-                hub.modDown(k.modBit)
+            k.isModifier && (modHold || modBit(k) == Mods.LGUI) -> {
+                val mb = modBit(k)
+                pointerHeldMods[pid] = mb
+                hub.modDown(mb)
             }
             k.isModifier -> {
                 val isShift = k.modBit == Mods.LSHIFT || k.modBit == Mods.RSHIFT
@@ -782,14 +846,14 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                     latchedMods.contains(k) -> {
                         cancelPendingChord(clearBits = true)
                         latchedMods.remove(k)
-                        hub.tapMods(k.modBit)   // 再点已锁定键 = 单发（Shift 切中英文）
+                        hub.tapMods(modBit(k))   // 再点已锁定键 = 单发（Shift 切中英文）
                     }
                     pendingChordBits != 0 -> {
-                        pendingChordBits = pendingChordBits or k.modBit
+                        pendingChordBits = pendingChordBits or modBit(k)
                         scheduleChord()
                     }
                     latchedMods.isNotEmpty() -> {
-                        pendingChordBits = latchedBits() or k.modBit
+                        pendingChordBits = latchedBits() or modBit(k)
                         scheduleChord()
                     }
                     else -> {
@@ -827,23 +891,24 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                 // 快速点按：发送该槽的组合键
                 shortcuts.getOrNull(slot)?.let { fireShortcut(it) }
                 // 手指仍按着的锁存修饰键等同按住，不随快捷键消费
-                latchedMods.removeAll { it.modBit and fingerHeldLatchBits() == 0 }
+                latchedMods.removeAll { modBit(it) and fingerHeldLatchBits() == 0 }
             }
             invalidate()
             return
         }
         val k = c.key!!
         when {
-            k.isModifier && (modHold || k.modBit == Mods.LGUI) ->
+            k.isModifier && (modHold || modBit(k) == Mods.LGUI) ->
                 pointerHeldMods.remove(pid)?.let { hub.modUp(it) }
             k.isModifier -> {
                 // 锁存型修饰键自身抬起：
                 //  - 组合已发生（该位随按键真实发下）→ 现在放开 = 提交
                 //    （长按 Alt 连点 Tab 循环切窗：抬手那一刻电脑端 Alt 才抬起、窗口切换）
                 //  - 纯点按锁存（尚未发过键）→ 保持锁存，等下一个普通键来消费
-                if (k.modBit and realLatchBits != 0) {
-                    realLatchBits = realLatchBits and k.modBit.inv()
-                    hub.modUp(k.modBit)
+                val mb = modBit(k)
+                if (mb and realLatchBits != 0) {
+                    realLatchBits = realLatchBits and mb.inv()
+                    hub.modUp(mb)
                     latchedMods.remove(k)
                 }
             }
@@ -858,12 +923,12 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
                     hub.keyDown(k.code, latchedBits() or chord)
                     hub.keyUp(k.code, keepBits)
                     realLatchBits = keepBits
-                    latchedMods.removeAll { it.modBit and keepBits == 0 }
+                    latchedMods.removeAll { modBit(it) and keepBits == 0 }
                 } else {
                     val keepBits = fingerHeldLatchBits()
                     pointerSent.remove(pid)?.let { hub.keyUp(it, keepBits) }
                     realLatchBits = keepBits
-                    latchedMods.removeAll { it.modBit and keepBits == 0 }
+                    latchedMods.removeAll { modBit(it) and keepBits == 0 }
                 }
             }
         }
@@ -875,14 +940,14 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         postDelayed({ hub.keyUp(s.code) }, 50)
     }
 
-    private fun latchedBits(): Int = latchedMods.fold(0) { acc, k -> acc or k.modBit }
+    private fun latchedBits(): Int = latchedMods.fold(0) { acc, k -> acc or modBit(k) }
 
     /** 锁存的修饰键中，手指仍按在屏上的位（这类锁存等同按住：组合跨多次按键保持） */
     private fun fingerHeldLatchBits(): Int {
         var bits = 0
         for (c in pointerCaps.values) {
             val k = c.key ?: continue
-            if (k.isModifier && k in latchedMods) bits = bits or k.modBit
+            if (k.isModifier && k in latchedMods) bits = bits or modBit(k)
         }
         return bits
     }
@@ -979,11 +1044,12 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         modRowLongRun.remove(pid)
         modRowLongFired.add(pid)
         val k = c.key!!
-        if (k.isModifier && k.modBit != Mods.LGUI && k in latchedMods) {
+        if (k.isModifier && modBit(k) != Mods.LGUI && k in latchedMods) {
             latchedMods.remove(k)               // 回滚 Ctrl/Alt 在按下瞬间的锁存
-            if (k.modBit and realLatchBits != 0) {
-                realLatchBits = realLatchBits and k.modBit.inv()
-                hub.modUp(k.modBit)             // 组合已发生的位一并回滚
+            val mb = modBit(k)
+            if (mb and realLatchBits != 0) {
+                realLatchBits = realLatchBits and mb.inv()
+                hub.modUp(mb)             // 组合已发生的位一并回滚
             }
         }
         cancelPendingChord(clearBits = true)
@@ -996,24 +1062,31 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
 
     private fun openModRowSwapDialog(slot: Int) {
         val act = context as? Activity ?: return
-        val labels = mapOf("ctrl" to "Ctrl", "alt" to "Alt", "tab" to "Tab", "win" to "Win", "esc" to "Esc")
+        val labels = mapOf(
+            "ctrl" to if (isMacLayout) "⌃" else "Ctrl",
+            "alt" to if (isMacLayout) "⌥" else "Alt",
+            "tab" to "Tab",
+            "win" to if (isMacLayout) "⌘" else "Win",
+            "esc" to "Esc",
+        )
         val order = modRowOrder()
         val current = order.getOrNull(slot) ?: return
-        AlertDialog.Builder(act)
-            .setTitle("把此位置换成（与所选键互换）")
-            .setItems(order.map { labels[it] ?: it }.toTypedArray()) { _, which ->
-                val pick = order.getOrNull(which)
-                if (pick != null && pick != current) {
-                    val next = order.toMutableList()
-                    next[which] = current
-                    next[slot] = pick
-                    saveModRowOrder(next)
-                    computeLayout()
-                    haptic()
+        PanelDialog.show(act, "把此位置换成（与所选键互换）") { root, dlg ->
+            for (key in order) {
+                PanelDialog.optionRow(act, root, labels[key] ?: key, key == current) {
+                    if (key != current) {
+                        val next = order.toMutableList()
+                        next[order.indexOf(key)] = current
+                        next[slot] = key
+                        saveModRowOrder(next)
+                        computeLayout()
+                        haptic()
+                    }
+                    invalidate()
+                    dlg.dismiss()
                 }
-                invalidate()
             }
-            .show()
+        }
     }
 
     // ---------- 自定义快捷键编辑器 ----------
@@ -1024,108 +1097,99 @@ class OneHandView(context: Context, private val hub: InputHub) : View(context) {
         val current = shortcuts.getOrNull(slot)
 
         val dpI = { v: Float -> (v * resources.displayMetrics.density).toInt() }
-        val box = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dpI(20f), dpI(12f), dpI(20f), dpI(4f))
-        }
 
-        // 前置声明：监听器里先引用，创建完控件后再赋上真正的实现
-        var refreshPreview: () -> Unit = {}
+        PanelDialog.show(act, "自定义快捷键 · 槽位 ${slot + 1}") { box, dlg ->
+            // 前置声明：监听器里先引用，创建完控件后再赋上真正的实现
+            var refreshPreview: () -> Unit = {}
 
-        box.addView(TextView(context).apply {
-            text = "修饰键（可多选）"
-            textSize = 13f
-            setTextColor(colorDim)
-        })
-        val modChecks = LinkedHashMap<Int, CheckBox>()
-        run {
-            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-            for ((bit, name) in listOf(
-                Mods.LCTRL to "Ctrl", Mods.LSHIFT to "Shift",
-                Mods.LALT to "Alt", Mods.LGUI to "Win",
-            )) {
-                row.addView(CheckBox(context).apply {
-                    text = name
-                    textSize = 14f
-                    isChecked = current != null && current.mods and bit != 0
-                    setOnCheckedChangeListener { _, _ -> refreshPreview() }
-                    modChecks[bit] = this
-                })
+            box.addView(TextView(context).apply {
+                text = "修饰键（可多选）"
+                textSize = 13f
+                setTextColor(colorDim)
+            })
+            val modChecks = LinkedHashMap<Int, CheckBox>()
+            run {
+                val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+                for ((bit, name) in listOf(
+                    Mods.LCTRL to (if (isMacLayout) "⌃" else "Ctrl"), Mods.LSHIFT to "Shift",
+                    Mods.LALT to (if (isMacLayout) "⌥" else "Alt"), Mods.LGUI to (if (isMacLayout) "⌘" else "Win"),
+                )) {
+                    row.addView(CheckBox(context).apply {
+                        text = name
+                        textSize = 14f
+                        isChecked = current != null && current.mods and bit != 0
+                        setOnCheckedChangeListener { _, _ -> refreshPreview() }
+                        modChecks[bit] = this
+                    })
+                }
+                box.addView(row)
             }
-            box.addView(row)
-        }
 
-        box.addView(TextView(context).apply {
-            text = "主键"
-            textSize = 13f
-            setTextColor(colorDim)
-        }, LinearLayout.LayoutParams(ViewGroup_Wrap(), dpI(6f)))
+            box.addView(TextView(context).apply {
+                text = "主键"
+                textSize = 13f
+                setTextColor(colorDim)
+            }, LinearLayout.LayoutParams(ViewGroup_Wrap(), ViewGroup_Wrap()).also {
+                it.topMargin = dpI(6f)
+            })
 
-        val keyLabels = ShortcutStore.CHOOSABLE_KEYS.map { it.first }
-        val spinner = Spinner(context).apply {
-            adapter = ArrayAdapter(
-                context,
-                android.R.layout.simple_spinner_dropdown_item,
-                keyLabels,
-            )
-            setSelection(
-                current?.let { c -> ShortcutStore.CHOOSABLE_KEYS.indexOfFirst { it.second == c.code } }
-                    ?.takeIf { it >= 0 } ?: 0
-            )
-            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) =
-                    refreshPreview()
+            val keyLabels = ShortcutStore.CHOOSABLE_KEYS.map { it.first }
+            val spinner = Spinner(context).apply {
+                adapter = ArrayAdapter(
+                    context,
+                    android.R.layout.simple_spinner_dropdown_item,
+                    keyLabels,
+                )
+                setSelection(
+                    current?.let { c -> ShortcutStore.CHOOSABLE_KEYS.indexOfFirst { it.second == c.code } }
+                        ?.takeIf { it >= 0 } ?: 0
+                )
+                onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) =
+                        refreshPreview()
 
-                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+                    override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+                }
             }
-        }
-        box.addView(spinner)
+            box.addView(spinner)
 
-        val preview = TextView(context).apply {
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(colorAccent)
-        }
-        box.addView(preview, LinearLayout.LayoutParams(ViewGroup_Wrap(), ViewGroup_Wrap()).also {
-            it.topMargin = dpI(14f)
-        })
+            val preview = TextView(context).apply {
+                textSize = 16f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorAccent)
+            }
+            box.addView(preview, LinearLayout.LayoutParams(ViewGroup_Wrap(), ViewGroup_Wrap()).also {
+                it.topMargin = dpI(14f)
+            })
 
-        fun modsBits(): Int = modChecks.entries.fold(0) { acc, (bit, cb) -> if (cb.isChecked) acc or bit else acc }
+            fun modsBits(): Int = modChecks.entries.fold(0) { acc, (bit, cb) -> if (cb.isChecked) acc or bit else acc }
 
-        refreshPreview = {
-            val code = ShortcutStore.CHOOSABLE_KEYS[spinner.selectedItemPosition].second
-            preview.text = "预览：${ShortcutStore.labelFor(modsBits(), code)}"
-        }
-        refreshPreview()
+            refreshPreview = {
+                val code = ShortcutStore.CHOOSABLE_KEYS[spinner.selectedItemPosition].second
+                preview.text = "预览：${store.labelFor(modsBits(), code)}"
+            }
+            refreshPreview()
 
-        val dialog = AlertDialog.Builder(act)
-            .setTitle("自定义快捷键 · 槽位 ${slot + 1}")
-            .setView(box)
-            .setPositiveButton("保存", null)
-            .setNegativeButton("取消", null)
-            .setNeutralButton("清空此槽", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val save = {
                 val code = ShortcutStore.CHOOSABLE_KEYS[spinner.selectedItemPosition].second
                 val list = shortcuts.toMutableList()
                 list[slot] = ShortcutStore.Shortcut(modsBits(), code)
                 shortcuts = list
                 store.save(list)
-                dialog.dismiss()
+                dlg.dismiss()
                 invalidate()
             }
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            val clear = {
                 val list = shortcuts.toMutableList()
                 list[slot] = null
                 shortcuts = list
                 store.save(list)
-                dialog.dismiss()
+                dlg.dismiss()
                 invalidate()
             }
+            PanelDialog.accentButton(act, box, "保存") { save() }
+            PanelDialog.plainButton(act, box, "清空此槽") { clear() }
         }
-        dialog.show()
     }
 
     private fun ViewGroup_Wrap(): Int = android.view.ViewGroup.LayoutParams.WRAP_CONTENT

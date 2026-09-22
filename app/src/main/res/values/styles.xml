@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 统一自定义弹窗：深色圆角面板（内容面板本身由 PanelDialog 绘制） -->
+    <style name="CustomDialog" parent="android:Theme.Material.Dialog">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
+</resources>
