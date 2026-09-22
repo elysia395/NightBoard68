@@ -28,8 +28,8 @@ let kDiscoverReq = "NB68_DISCOVER_V1"
 
 // 局域网注入的按键没有硬件自动重复（那是物理键盘固件干的），长按连发由代理模拟：
 // 按下 450ms 后按 ~30 次/秒 注入"抬起+按下"，直到收到 ku。与 Windows 版参数一致。
-let kRepeatDelayMs: Int64 = 450
-let kRepeatIntervalMs: Int64 = 33
+let kRepeatDelayMs: Int = 450
+let kRepeatIntervalMs: Int = 33
 
 // MARK: - HID 键码 → macOS 虚拟键码
 
@@ -125,7 +125,7 @@ private func openLog() {
         FileManager.default.createFile(atPath: url.path, contents: nil)
     }
     logHandle = FileHandle(forWritingAtPath: url.path)
-    try? logHandle?.seekToEnd()
+    _ = try? logHandle?.seekToEnd()
 }
 
 func log(_ msg: String) {
@@ -367,7 +367,7 @@ final class Agent {
                 break
             }
             var nodelay: Int32 = 1
-            setsockopt(cfd, IPPROTO_TCP, TCP_NODAY, &nodelay, socklen_t(MemoryLayout<Int32>.size))
+            setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &nodelay, socklen_t(MemoryLayout<Int32>.size))
             guard let conn = ClientConn(fd: cfd) else {
                 close(cfd)
                 continue
@@ -560,8 +560,8 @@ final class Agent {
         if wheel != 0 {
             // 手机端 1 格 ≈ 物理滚轮 1 格；用像素单位发送，不支持平滑滚动的 App
             // 会由系统折算成行，与 Windows 版 WHEEL_DELTA(120) 手感一致
-            if let e = CGEvent(scrollWheelEventSource: nil, units: .unitPixel,
-                               wheel1: Int32(wheel * 120), wheel2: 0) {
+            if let e = CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                               wheelCount: 2, wheel1: Int32(wheel * 120), wheel2: 0, wheel3: 0) {
                 events.append(e)
             }
         }

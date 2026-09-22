@@ -463,7 +463,7 @@ cd pc-agent && build.bat
 macOS 版电脑端代理（单文件 Swift，零第三方依赖，需要 Xcode 命令行工具）：
 
 ```bash
-swiftc -O -o NightBoardAgent mac-agent/NightBoardAgent.swift \
+swiftc -O -parse-as-library -o NightBoardAgent mac-agent/NightBoardAgent.swift \
   -framework Foundation -framework AppKit \
   -framework CoreGraphics -framework ApplicationServices
 :: 装进 NightBoardAgent.app/Contents/MacOS/ 即可运行，详见 mac-agent/README.md

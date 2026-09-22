@@ -34,13 +34,13 @@ UDP 6869（自动发现）+ TCP 6868（输入传输），换行分隔 UTF-8 JSON
 
 ```bash
 # 本机架构
-swiftc -O -o NightBoardAgent NightBoardAgent.swift \
+swiftc -O -parse-as-library -o NightBoardAgent NightBoardAgent.swift \
   -framework Foundation -framework AppKit \
   -framework CoreGraphics -framework ApplicationServices
 
 # 通用二进制（Intel + Apple Silicon）
 for ARCH in x86_64 arm64; do
-  swiftc -O -target "${ARCH}-apple-macos12.0" -o "agent-${ARCH}" NightBoardAgent.swift \
+  swiftc -O -parse-as-library -target "${ARCH}-apple-macos12.0" -o "agent-${ARCH}" NightBoardAgent.swift \
     -framework Foundation -framework AppKit \
     -framework CoreGraphics -framework ApplicationServices
 done
