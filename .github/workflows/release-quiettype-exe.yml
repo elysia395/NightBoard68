@@ -1,0 +1,91 @@
+name: release-quiettype-exe
+
+# QuietType Windows 主机端：PyInstaller 单文件 exe 构建与发布
+#
+# 触发方式：
+#   - 推送形如 quiettype-win-1.0.0 的 tag → 构建 exe 并发布 GitHub Release
+#   - 手动触发 → 只构建并上传 exe 工件，不发布 Release
+#
+# 产物：QuietType.exe（单文件，用户电脑无需安装 Python，双击即出网址+二维码）
+
+on:
+  push:
+    tags:
+      - 'quiettype-win-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 PyInstaller 并打包单文件 exe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          python quiettype/build_exe.py
+          ls -lh dist/
+
+      - name: 冒烟测试：启动 exe，验证 API / 网页 / 二维码
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./dist/QuietType.exe > qt-startup.log 2>&1 &
+          EXE_PID=$!
+          INFO=""
+          for i in $(seq 1 30); do
+            INFO="$(curl -s --max-time 3 http://127.0.0.1:8567/api/info || true)"
+            if [ -n "$INFO" ]; then break; fi
+            sleep 1
+          done
+          echo "--- exe 启动输出 ---"; cat qt-startup.log
+          echo "GET /api/info -> $INFO"
+          [ -n "$INFO" ] || { echo "::error::exe 启动 30 秒内无响应"; exit 1; }
+          echo "$INFO" | grep -q '"token"' || { echo "::error::/api/info 缺少 token"; exit 1; }
+          PAGE="$(curl -s --max-time 5 http://127.0.0.1:8567/)"
+          echo "$PAGE" | grep -qi "quiettype" || { echo "::error::首页内容异常（web 资源没打进去？）"; exit 1; }
+          QR="$(curl -s --max-time 5 http://127.0.0.1:8567/qr.svg | head -c 60)"
+          echo "GET /qr.svg -> ${QR}..."
+          echo "$QR" | grep -q "svg" || { echo "::error::二维码接口异常（segno 没打进去？）"; exit 1; }
+          # 控制台 ASCII 二维码：Python 写文件是块缓冲，强杀时可能没落盘，只作软检查
+          if grep -aq "##" qt-startup.log; then
+            echo "控制台二维码: 已打印"
+          else
+            echo "::warning::控制台二维码未在日志中检测到（缓冲刷新时机，不影响功能；/qr.svg 已证明 segno 正常）"
+          fi
+          echo "冒烟测试通过"
+          taskkill //F //PID "$EXE_PID" || taskkill //F //IM QuietType.exe || true
+
+      - name: 上传构建工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietType-exe
+          path: dist/QuietType.exe
+          if-no-files-found: error
+
+      - name: 发布 Release（仅 tag 触发）
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 附带 firewall_allow.bat：用户连不上时管理员运行一次放行 8567
+          # 同一 tag 重跑时 create 会因已存在而失败，退回到上传并覆盖资产
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "QuietType Windows 主机端 ${GITHUB_REF_NAME#quiettype-win-} · 双击即用（免装 Python）" \
+            --notes-file quiettype/RELEASE_NOTES_WIN.md \
+            dist/QuietType.exe \
+            quiettype/firewall_allow.bat \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            dist/QuietType.exe quiettype/firewall_allow.bat --clobber

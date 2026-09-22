@@ -14,7 +14,8 @@ Windows 端软件模拟 HID(SendInput 注入)**。纯 Python 标准库,零依赖
 
 ```
 quiettype/
-├─ run.bat                     双击启动主机端(Windows)
+├─ run.bat                     源码方式启动主机端(Windows,需装 Python)
+├─ build_exe.py                把主机端打成单文件 exe(开发机用,需 pyinstaller)
 ├─ firewall_allow.bat          管理员运行一次,放行 8567(连不上时才需要)
 ├─ README.md                   本文件
 ├─ PROTOCOL.md                 网页版与 iOS App 共用的通信协议
@@ -22,22 +23,34 @@ quiettype/
 │  ├─ quiettype_server.py      主机端(纯标准库)
 │  └─ web/                     手机浏览器客户端(index.html/app.js/style.css)
 └─ ios/
-   ├─ README-iOS.md            iOS App 编译与侧载完整步骤(需要 Mac)
-   ├─ Info.plist.extra.txt     iOS 工程要加的权限片段
-   └─ QuietType/               Swift 源码(7 个文件)
+   ├─ README-iOS.md            iOS App 编译与侧载完整步骤
+   ├─ project.yml              XcodeGen 工程描述(Info.plist 权限在里面)
+   └─ QuietType/               Swift 源码(7 个文件)+ App 图标
 ```
 
-## 一、电脑端(一次,10 秒)
+## 一、电脑端(两种方式,推荐 A)
+
+### A. 下载 exe 双击即用(推荐,不用装 Python)
+
+到 [Releases](../../releases) 下载 `QuietType-1.0.0.exe`,**双击运行**:
+
+- 黑窗口打印本次网址(如 `http://192.168.1.5:8567/`)和一个二维码;
+- 首次运行若弹「Windows 已保护你的电脑」,点**更多信息 → 仍要运行**
+  (未做商业签名的正常提示);
+- 保持窗口开着;关掉即停止。`Ctrl+C` 退出。
+
+### B. 源码运行(开发者,需装 Python 3)
 
 1. 双击 `run.bat`(或命令行 `python server\quiettype_server.py`)。
-2. 窗口会打印出本次网址和一个**用 # 拼成的二维码**:
+2. 窗口同样会打印出本次网址和一个**用 # 拼成的二维码**:
    - 手机手动打开 `http://192.168.1.5:8567/`,或
    - 用 **iPhone 相机扫窗口里的二维码**直达连接页(最快,不用敲网址);
    - 电脑浏览器打开 `http://127.0.0.1:8567/` 时,页面顶部也会显示同款可扫二维码。
 3. 保持窗口开着;关掉即停止。`Ctrl+C` 退出。
 
 > 连不上时:手机电脑必须**同一个 Wi-Fi**;然后右键
-> `firewall_allow.bat` **以管理员身份运行**一次(放行 TCP 8567)。
+> `firewall_allow.bat` **以管理员身份运行**一次(放行 TCP 8567;
+> exe 用户在 Release 附件里能下载到同一个文件)。
 > 公司/访客 Wi-Fi 若开启了「AP 隔离」则手机连不到电脑,换家用路由即可。
 
 ## 二、手机端 —— 网页版(今天就能用,不用装任何东西)
@@ -67,23 +80,26 @@ iOS App 与网页版功能一致、走同一协议,但没有浏览器外壳、�
 ## 怎么分享给其他人(对方也是 iPhone + Windows)
 
 别人的用法和你一样:**他电脑上双击运行服务,手机浏览器打开网址即可**。
-给对方打包好的版本即可,不必给对方装 Python:
+给对方 [Releases](../../releases) 里打好的 `QuietType-1.0.0.exe` 即可,
+不必给对方装 Python:
 
-1. 把 `QuietType-分享版.zip` 发给对方(内含:`QuietType.exe` 单文件服务、
-   `防火墙放行.bat`、`给朋友的使用说明.txt`);
-2. 对方解压 → 双击 `QuietType.exe`(Windows 若提示"已保护你的电脑",
-   点"更多信息 → 仍要运行"即可,因为 exe 未做商业签名);
-3. 保持黑窗口开着,手机上 **相机扫窗口里的二维码**(或手动打开窗口里网址)
+1. 对方下载 `QuietType-1.0.0.exe`(连不上时再给 `firewall_allow.bat`),
+   双击运行(Windows 若提示"已保护你的电脑",点"更多信息 → 仍要运行"即可,
+   因为 exe 未做商业签名);
+2. 保持黑窗口开着,手机上 **相机扫窗口里的二维码**(或手动打开窗口里网址)
    → 允许本地网络 → 开始用。
 
 重新打包 exe 的方法(本仓库开发机):`pip install pyinstaller` 后执行
-`python -m PyInstaller --onefile --name QuietType --add-data "server\web;web" --add-data "server\vendor;vendor" server\quiettype_server.py`。
+`python build_exe.py`;或在 [Releases](../../releases) 下载 CI 构建的版本。
 杀毒软件可能对 PyInstaller 产物误报;如担心可改用源码运行(run.bat,需装 Python)。
 
 关于"原生 iOS App 给别人用":免费 Apple ID 只能给自己的设备签名;
 要分发给任意第三方,需要 $99/年 开发者账号(TestFlight / Ad Hoc 按 UDID 添加)
 或上架 App Store——与本项目"不进 App Store"的目标相悖。**网页版功能与原生壳
-完全一致且零安装,是分享给别人的推荐路径**;有 Mac 的朋友也可以拿 `ios/`
+完全一致且零安装,是分享给别人的推荐路径**。
+CI 已能产出未签名 IPA([Releases](../../releases) 的 `QuietType-ios-*` 标签),
+爱折腾的用户可用 AltStore / Sideloadly 自签安装,步骤见
+[ios/README-iOS.md](ios/README-iOS.md);有 Mac 的朋友也可以拿 `ios/`
 源码自行编译侧载。
 
 ## 常见问题

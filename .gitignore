@@ -16,3 +16,9 @@ quiettype/ios/QuietType-Info.plist
 quiettype/ios/build/
 Payload/
 *.ipa
+
+# PyInstaller 打包产物（quiettype/build_exe.py，CI 里现生成）
+quiettype/dist/
+quiettype/build/
+quiettype/QuietType.spec
+__pycache__/
