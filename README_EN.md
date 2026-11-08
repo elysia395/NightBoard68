@@ -15,6 +15,16 @@ HID device — **zero software to install on the PC**.
   </tr>
 </table>
 
+> [!IMPORTANT]
+> **For most users, the [v1.4.2 release](https://github.com/elysia395/NightBoard68/releases/tag/v1.4.2) is the one you want (pinned as Latest on the Releases page):**
+>
+> - 📱 `NightBoard68-v1.4.2.apk` is an **Android app** — it installs on Android
+>   phones/tablets only; Windows/macOS computers can't install an APK;
+> - 🖥 To use **LAN mode**, you must also download and **double-click to run**
+>   `NightBoardAgent-v1.4.2.exe` on the Windows PC and keep it running while you
+>   type — without it, LAN mode cannot connect;
+> - Bluetooth-only users don't need to install anything on the PC.
+
 > **Current version: v1.4.2** (based on upstream v1.2.1, version numbering aligned
 > with this repository). What's new in v1.4.2 (vs v1.4.1):
 >
