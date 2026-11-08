@@ -53,6 +53,12 @@
 - **根因**：Caps 点亮时只加橙色描边，**底色填充分支漏了 capsLit**，与 Shift/Ctrl/Fn 锁存样式不一致。
 - **修复**（KeyboardView.kt）：`capsLit -> colorKeyLatched` 底色填充，叠加橙色描边 + 橙色文字，样式统一。
 
+## 10. 蓝牙/主键盘：Shift+Esc 键帽显示 `~` 但电脑端无输出
+
+- **现象**：主键盘锁定/锁存 Shift 后按 Esc，键帽已显示 `~`，电脑端却收不到波浪号（实际收到 Shift+Esc，不产生字符），且发送层无报错。
+- **根因**：上档**绘制表与分发表不一致** —— `shiftLabelOf()` 只负责画 `Hid.ESC -> "~"`，分发处只按 Fn 换码、不按 Shift 换码 → 发出 `Esc(0x29)+LSHIFT`；`~` 真正需要的 `Grave(0x35)+LSHIFT` 唯一入口（Fn 层 Esc→`` ` ``）又被 Fn 与 Shift 双向互斥堵死。`charToHid()` 中 `'~' -> GRAVE+shift` 定义正确但全仓库零调用。
+- **修复**（KeyboardView.kt `press()`）：分发处补上档换码 —— `baseCode == Hid.ESC` 且 Shift 生效时改发 `Hid.GRAVE`；Shift 生效判断覆盖锁存/chord/autoMods（随 `bits` 发出）、双击锁定 `lockedBits`、`mod_hold` 按住 `pointerHeldMods` 四种模式。`release()` 经 `pointerSent` 自动抬起同键码，无需改动。
+
 ## 部署
 
 | 侧                                                 | 重新构建                             |

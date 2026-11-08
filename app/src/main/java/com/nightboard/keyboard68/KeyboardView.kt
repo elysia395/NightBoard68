@@ -2173,9 +2173,19 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 val chordBits = pendingChordBits
                 cancelPendingChord(clearBits = false)
                 pendingChordBits = 0
-                val code = if (fnLatched && k.fnLabel != null) k.fnCode else k.code
+                val baseCode = if (fnLatched && k.fnLabel != null) k.fnCode else k.code
+                val bits = latchedBits() or chordBits or k.autoMods
+                // 上档需换码的键：键帽承诺 Shift+Esc = ~，Esc(0x29) 必须换成 Grave(0x35)
+                // Shift 判断覆盖四种模式：锁存/chord/autoMods（随 bits 发出）、
+                // 双击锁定 lockedBits、mod_hold 按住 pointerHeldMods（后两者已 modDown 真实按下）
+                val shiftBits = Mods.LSHIFT or Mods.RSHIFT
+                val shiftDown = bits and shiftBits != 0 ||
+                    lockedBits and shiftBits != 0 ||
+                    pointerHeldMods.containsValue(Mods.LSHIFT) ||
+                    pointerHeldMods.containsValue(Mods.RSHIFT)
+                val code = if (baseCode == Hid.ESC && shiftDown) Hid.GRAVE else baseCode
                 pointerSent[pid] = code
-                hub.keyDown(code, latchedBits() or chordBits or k.autoMods)
+                hub.keyDown(code, bits)
             }
         }
         invalidate()
