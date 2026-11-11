@@ -409,9 +409,11 @@ function setupPad(padId, toastId, stripId) {
     move(t.clientX - r.left, t.clientY - r.top);
   }, { passive: false });
   pad.addEventListener("touchend", (e) => {
+    // 阻止 iOS Safari 在触摸后补发 mousedown/mouseup,否则一次轻点会触发两次左键(#17)
+    e.preventDefault();
     if (!e.touches || e.touches.length === 0) twoLastY = null;
     end();
-  });
+  }, { passive: false });
   pad.addEventListener("mousedown", (e) => { const r = pad.getBoundingClientRect(); start(e.clientX - r.left, e.clientY - r.top); });
   pad.addEventListener("mousemove", (e) => { const r = pad.getBoundingClientRect(); move(e.clientX - r.left, e.clientY - r.top); });
   window.addEventListener("mouseup", end);
