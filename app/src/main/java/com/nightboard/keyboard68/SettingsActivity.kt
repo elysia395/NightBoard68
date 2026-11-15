@@ -335,8 +335,8 @@ class SettingsActivity : Activity() {
 
         // ---------- 外观 ----------
         card("外观") {
-            addView(hint("键盘文字大小、嵌入模式触控板与鼠标键列宽度均可调整；嵌中/嵌左/嵌右共享同一组宽度。"
-                + "改完退出重进键盘页面生效。"))
+            addView(hint("键盘文字大小、嵌入模式触控板与鼠标键列宽度均可调整；嵌左/嵌中/嵌右共享同一组宽度，"
+                + "嵌底的鼠标键在触控板下方横排、无侧边键列。改完退出重进键盘页面生效。"))
             // 键盘文字大小（0.7~1.6 倍）
             addView(TextView(this@SettingsActivity).apply {
                 text = "键盘文字大小："
@@ -397,9 +397,9 @@ class SettingsActivity : Activity() {
             updatePadWLabel(padWBar.progress)
             addView(padWLabel)
             addView(padWBar)
-            // 嵌入鼠标键列宽度（dp）
+            // 嵌入鼠标键列宽度（dp，仅嵌左/嵌中/嵌右；嵌底无侧列）
             addView(TextView(this@SettingsActivity).apply {
-                text = "嵌入模式 · 鼠标键列宽度："
+                text = "嵌入模式 · 鼠标键列宽度（嵌左/嵌中/嵌右）："
                 textSize = 13f
                 setTextColor(dim)
             }, LinearLayout.LayoutParams(

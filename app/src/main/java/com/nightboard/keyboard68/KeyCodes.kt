@@ -51,6 +51,8 @@ object Hid {
     const val NUMPAD_4 = 0x5C; const val NUMPAD_5 = 0x5D; const val NUMPAD_6 = 0x5E
     const val NUMPAD_7 = 0x5F; const val NUMPAD_8 = 0x60; const val NUMPAD_9 = 0x61
     const val NUMPAD_0 = 0x62; const val NUMPAD_DOT = 0x63
+
+    const val MENU = 0x65   // Application / Menu（右键菜单键，报告描述符 Usage Max 恰好覆盖）
 }
 
 /**

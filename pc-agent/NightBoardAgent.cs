@@ -412,6 +412,7 @@ class NightBoardAgent
         m[0x61] = new KeyDef(0x51, false, 0);   // 3
         m[0x62] = new KeyDef(0x52, false, 0);   // 0
         m[0x63] = new KeyDef(0x53, false, 0);   // .
+        m[0x65] = new KeyDef(0, false, 0x5D);   // Menu / Application (VK_APPS)，60% 配列右键菜单键
         // 修饰键 (HID 0xE0..0xE7)
         m[0xE0] = new KeyDef(0x1D, false, 0);   // LCtrl
         m[0xE1] = new KeyDef(0x2A, false, 0);   // LShift

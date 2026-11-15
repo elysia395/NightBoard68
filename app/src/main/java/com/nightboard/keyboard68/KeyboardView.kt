@@ -56,8 +56,10 @@ import org.json.JSONObject
  *    · 全屏：整屏触控板（左侧带鼠标左中右三键）
  *    · 悬浮：键盘上悬浮一块可拖动位置的小触控板
  *    · 嵌入：键盘缩窄，两侧各一条鼠标左中右键列，小触控板嵌入键盘空间（左/中/右）
+ *    · 嵌底：触控板在右，鼠标左中右三键横排在板正下方（笔记本式，issue #19）
  *  - 触控板手势：单指移动、轻点=左键、双指=右键、长按拖动、双指滑动=滚动、捏合=缩放
  *  - 布局编辑：点顶部「布局」，左右拖动任意键帽改变键宽；同一行自动重新分配空间
+ *  - 配列切换：长按顶部「布局」，在 65%(68) / 75%(82) / 60%(61) 间选择（issue #20）
  */
 class KeyboardView(context: Context, private val hub: InputHub) : View(context) {
 
@@ -106,6 +108,9 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     // ---------- Mac 键位（设置页"键盘布局"切换，win = Windows/Linux） ----------
     private val isMacLayout get() = prefs.getString("keyboard_layout", "win") == "mac"
+
+    // ---------- 配列（长按顶部「布局」切换，65% 默认；getter 实时读取） ----------
+    private val layout: KbLayout get() = KbLayouts.byId(prefs.getString(PREF_KB_LAYOUT, KbLayouts.DEFAULT_ID))
 
     /** Mac 模式：左 Alt 发 Command(⌘)、左 Win 发 Option(⌥)，与 Mac 键盘手位一致；其余位不变 */
     private fun modBit(k: Key): Int {
@@ -210,8 +215,8 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     private var floatingResizeStartH = 0f
     /** 鼠标左/中/右键列（全屏仅左列；嵌入左右各一列） */
     private var mouseKeys: List<MouseKey> = emptyList()
-    /** 鼠标键列当前按住的键（非 0 = 该键保持按下，触控板移动联动成拖放） */
-    private var heldMouseButton = 0
+    /** 鼠标键列当前按住的键下标（-1 = 无；用下标而非键码，嵌中左右两列键码重复时只高亮按下的那一颗） */
+    private var heldMouseKeyIndex = -1
     private var heldMousePointer = INVALID_POINTER_ID
 
     // ---------- 底部小白条选择（长按中英/输入法/触控板模式后的选项条） ----------
@@ -247,6 +252,8 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     private val isFullPad: Boolean get() = padOn && padType == PAD_FULL
     private val isFloating: Boolean get() = padOn && padType == PAD_FLOATING
     private val isEmbed: Boolean get() = padOn && padType.startsWith(PAD_EMBED_PREFIX)
+    /** 嵌底：触控板在右、鼠标三键横排在板下方（无侧边键列） */
+    private val isEmbedBottom: Boolean get() = padOn && padType == PAD_EMBED_BOTTOM
 
     /** Shift 层激活（单点锁存 或 双击持续锁定）：键帽显示上档字符，如 Fn 激活那样高亮 */
     private val shiftActive: Boolean
@@ -325,17 +332,23 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         radius = dp(9f)
         stripH = dp(34f)
 
+        // 行高按当前配列行数归一化（65%/60% 为 5 行，75% 为 6 行）；
+        // 提前算出：嵌底样式要用它给板下方的鼠标键行留高度
+        val rowCount = layout.rows.size
+        rowH = (h - stripH - pad * 2 - gap * (rowCount - 1)) / rowCount
+
         val fullColW = if (isFullPad) dp(FULL_COL_W_DP) else 0f    // 全屏模式左侧键列
-        val mouseColW = if (isEmbed) embedMouseCol else 0f          // 嵌入模式左右键列（可调宽）
+        val mouseColW = if (isEmbed && !isEmbedBottom) embedMouseCol else 0f   // 嵌入侧边键列（嵌底无侧列）
 
         // 键盘区边界（全屏/嵌入时两侧让出键列与触控板；sideInset 避开边缘摄像头/圆角）
         var kbLeft = pad + sideInset + fullColW + (if (fullColW > 0f) gap else 0f)
         var kbRight = w - pad - sideInset
         if (isEmbed) {
-            // 鼠标键列只放在触控板对侧：嵌左（板左）右侧有键列；嵌右（板右）左侧有键列；嵌中两侧都有
+            // 鼠标键列只放在触控板对侧：嵌左（板左）右侧有键列；嵌右（板右）左侧有键列；嵌中两侧都有；嵌底无侧列
             when (padType) {
                 PAD_EMBED_LEFT -> kbRight -= mouseColW + gap
                 PAD_EMBED_RIGHT -> kbLeft += mouseColW + gap
+                PAD_EMBED_BOTTOM -> {}   // 键在板下方，键盘区不让侧边
                 else -> {
                     kbLeft += mouseColW + gap
                     kbRight -= mouseColW + gap
@@ -359,6 +372,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                     }
                     PAD_EMBED_RIGHT -> {  // 触控板在右，键盘靠左
                         padBodyRect = RectF(kbRight - tpW, stripH + pad, kbRight, h - pad)
+                        kbRight -= tpW + gap
+                    }
+                    PAD_EMBED_BOTTOM -> { // 触控板在右，板下方留一行放鼠标左中右键（笔记本式）
+                        padBodyRect = RectF(kbRight - tpW, stripH + pad, kbRight, h - pad - rowH - gap)
                         kbRight -= tpW + gap
                     }
                     else -> {             // 触控板居中，键盘分成左右两半
@@ -446,12 +463,12 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
             numpadKeys = keys
         }
 
-        // 键盘行：16u 归一化到键盘区（嵌入居中时分两半）
+        // 键盘行：按行归一化铺满键盘区（嵌入居中时分两半）；rowH 已在前面按配列行数算好
         unitW = (kbRight - kbLeft - gap * 16) / 16f
-        rowH = (h - stripH - pad * 2 - gap * 4) / 5f
-        val list = ArrayList<KeyRect>(68)
+        val rows = layout.rows
+        val list = ArrayList<KeyRect>(rows.sumOf { it.size })
         var y = stripH + pad
-        for ((rowIndex, row) in Layout68.rows.withIndex()) {
+        for ((rowIndex, row) in rows.withIndex()) {
             if (isEmbed && padType == PAD_EMBED_MID && kbRightMid > 0f) {
                 val (l, r) = splitRow(row)
                 if (l.isNotEmpty()) placeRow(list, rowIndex, l, kbLeft, kbRight, y)
@@ -511,12 +528,13 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         stripButtons = btns
     }
 
-    /** 嵌入居中：把一行按键按 16u 一半处切成左右两段 */
+    /** 嵌入居中：把一行按键按行宽中点切成左右两段（按该行实际总宽取半，兼容 15u 的 60% 配列） */
     private fun splitRow(keys: List<Key>): Pair<List<Key>, List<Key>> {
+        val half = keys.sumOf { it.width.toDouble() }.toFloat() / 2f
         var acc = 0f
         for (i in keys.indices) {
             val u = keys[i].width
-            if (acc + u / 2f >= ROW_WIDTH_UNITS / 2f) {
+            if (acc + u / 2f >= half) {
                 return keys.subList(0, i + 1) to keys.subList(i + 1, keys.size)
             }
             acc += u
@@ -547,9 +565,22 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         }
     }
 
-    /** 生成鼠标左/中/右键列（全屏仅左列；嵌入只在对侧，嵌中左右各一列） */
+    /** 生成鼠标左/中/右键（全屏仅左列；嵌入只在对侧，嵌中左右各一列；嵌底为板下方横排） */
     private fun buildMouseKeys(w: Float, h: Float, fullColW: Float, mouseColW: Float) {
         mouseKeys = emptyList()
+        // 嵌底：左|中|右 横排在触控板正下方，与键盘行同高（笔记本式，issue #19）
+        if (isEmbedBottom) {
+            val top = padBodyRect.bottom + gap
+            val bw = (padBodyRect.width() - gap * (MOUSE_KEY_DEFS.size - 1)) / MOUSE_KEY_DEFS.size
+            val list = ArrayList<MouseKey>(MOUSE_KEY_DEFS.size)
+            var x = padBodyRect.left
+            for ((label, btn) in MOUSE_KEY_DEFS) {
+                list.add(MouseKey(RectF(x, top, x + bw, top + rowH), btn, label))
+                x += bw + gap
+            }
+            mouseKeys = list
+            return
+        }
         val cols = ArrayList<Pair<Float, Float>>()
         if (isFullPad) cols.add((pad + sideInset) to (pad + sideInset + fullColW))
         if (isEmbed) {
@@ -766,9 +797,9 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 b.rect.centerY() - (fm.ascent + fm.descent) / 2f,
                 paintText,
             )
-            // 可长按的按钮（中英/输入法/触控板模式）：从未长按过 = 右上角橙点引导；
+            // 可长按的按钮（中英/输入法/触控板模式/配列）：从未长按过 = 右上角橙点引导；
             // 长按过至少一次 = 底部 2px 圆角浅白横线（表示已会用）
-            if (b.id == BTN_SHIFT || b.id == BTN_IME || b.id == BTN_PAD_TYPE) {
+            if (b.id == BTN_SHIFT || b.id == BTN_IME || b.id == BTN_PAD_TYPE || b.id == BTN_LAYOUT) {
                 if (prefs.getBoolean(longPressPrefKey(b.id), false)) {
                     paintFill.color = Color.parseColor("#59D8DEE8")   // 半透明浅白（35% 透明度），不刺眼
                     val lw = b.rect.width() * 0.5f
@@ -865,12 +896,13 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     /** 鼠标键列（左键/中键/右键） */
     private fun drawMouseKeys(canvas: Canvas) {
-        for (mk in mouseKeys) {
-            paintFill.color = colorKey
+        for ((mi, mk) in mouseKeys.withIndex()) {
+            val pressed = mi == heldMouseKeyIndex
+            paintFill.color = if (pressed) colorKeyPressed else colorKey
             canvas.drawRoundRect(mk.rect, radius, radius, paintFill)
-            paintStroke.color = colorAccentDim
+            paintStroke.color = if (pressed) colorAccent else colorAccentDim
             canvas.drawRoundRect(mk.rect, radius, radius, paintStroke)
-            paintText.color = colorDim
+            paintText.color = if (pressed) colorAccent else colorDim
             paintText.textSize = dp(14f)
             val fm = paintText.fontMetrics
             canvas.drawText(mk.label, mk.rect.centerX(), mk.rect.centerY() - (fm.ascent + fm.descent) / 2f, paintText)
@@ -1006,6 +1038,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                                         haptic()
                                         openPadTypePicker()
                                     }
+                                    BTN_LAYOUT -> {
+                                        haptic()
+                                        openLayoutPicker()
+                                    }
                                     else -> {}
                                 }
                             }
@@ -1129,13 +1165,14 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
             }
             // 鼠标键列：按住 = 该鼠标键保持按下，配合触控板移动形成拖放/框选；
             // 快速按下抬起仍是普通点击
-            for (mk in mouseKeys) {
+            for ((mi, mk) in mouseKeys.withIndex()) {
                 if (mk.rect.contains(x, y)) {
                     haptic()
-                    heldMouseButton = mk.button
+                    heldMouseKeyIndex = mi
                     heldMousePointer = e.getPointerId(i)
                     tp.externalButton = mk.button
                     hub.sendMouse(0, 0, 0, mk.button)
+                    invalidate()
                     return true
                 }
             }
@@ -1149,9 +1186,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
             val pid = e.getPointerId(e.actionIndex)
             if (e.actionMasked == MotionEvent.ACTION_CANCEL || pid == heldMousePointer) {
                 hub.sendMouse(0, 0, 0, 0)
-                heldMouseButton = 0
+                heldMouseKeyIndex = -1
                 heldMousePointer = INVALID_POINTER_ID
                 tp.externalButton = 0
+                invalidate()
                 return true
             }
         }
@@ -1400,6 +1438,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
     private fun longPressPrefKey(btnId: Int): String = when (btnId) {
         BTN_SHIFT -> "long_press_shift"
         BTN_IME -> "long_press_ime"
+        BTN_LAYOUT -> "long_press_layout"
         else -> "long_press_padtype"
     }
 
@@ -1499,51 +1538,68 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     /** 布局编辑模式：调整嵌入触控板宽度 / 鼠标键列宽度（拖动即时重排） */
     private fun openLayoutSizeDialog() {
-        showSlidersDialog("嵌入布局尺寸", listOf(
-            SliderSpec(
-                "触控板宽度（占键盘区）：",
-                SeekBar(context).apply {
-                    max = 40
-                    progress = prefs.getInt("embed_pad_width", 35).coerceIn(20, 60) - 20
-                },
-                { p -> "当前：${p + 20}%（越大键盘越窄）" },
-                live = { p ->
-                    prefs.edit().putInt("embed_pad_width", (p + 20).coerceIn(20, 60)).apply()
-                    computeLayout(); invalidate()
-                },
-                onStop = { p ->
-                    prefs.edit().putInt("embed_pad_width", (p + 20).coerceIn(20, 60)).apply()
-                    computeLayout(); invalidate()
-                },
-            ),
-            SliderSpec(
-                "鼠标键列宽度：",
-                SeekBar(context).apply {
-                    max = 36
-                    progress = prefs.getInt("embed_mouse_col", 52).coerceIn(36, 72) - 36
-                },
-                { p -> "当前：${p + 36} dp" },
-                live = { p ->
-                    prefs.edit().putInt("embed_mouse_col", (p + 36).coerceIn(36, 72)).apply()
-                    computeLayout(); invalidate()
-                },
-                onStop = { p ->
-                    prefs.edit().putInt("embed_mouse_col", (p + 36).coerceIn(36, 72)).apply()
-                    computeLayout(); invalidate()
-                },
-            ),
+        val sliders = ArrayList<SliderSpec>()
+        sliders.add(SliderSpec(
+            "触控板宽度（占键盘区）：",
+            SeekBar(context).apply {
+                max = 40
+                progress = prefs.getInt("embed_pad_width", 35).coerceIn(20, 60) - 20
+            },
+            { p -> "当前：${p + 20}%（越大键盘越窄）" },
+            live = { p ->
+                prefs.edit().putInt("embed_pad_width", (p + 20).coerceIn(20, 60)).apply()
+                computeLayout(); invalidate()
+            },
+            onStop = { p ->
+                prefs.edit().putInt("embed_pad_width", (p + 20).coerceIn(20, 60)).apply()
+                computeLayout(); invalidate()
+            },
         ))
+        // 嵌底样式鼠标键是板下方一整行（宽随板宽、高随键行），没有独立键列宽可调
+        if (!isEmbedBottom) sliders.add(SliderSpec(
+            "鼠标键列宽度：",
+            SeekBar(context).apply {
+                max = 36
+                progress = prefs.getInt("embed_mouse_col", 52).coerceIn(36, 72) - 36
+            },
+            { p -> "当前：${p + 36} dp" },
+            live = { p ->
+                prefs.edit().putInt("embed_mouse_col", (p + 36).coerceIn(36, 72)).apply()
+                computeLayout(); invalidate()
+            },
+            onStop = { p ->
+                prefs.edit().putInt("embed_mouse_col", (p + 36).coerceIn(36, 72)).apply()
+                computeLayout(); invalidate()
+            },
+        ))
+        showSlidersDialog("嵌入布局尺寸", sliders)
     }
 
-    /** 长按「触控板模式」：底部白条直接选择（全屏/悬浮/嵌左/嵌中/嵌右） */
+    /** 长按「触控板模式」：底部白条直接选择（全屏/悬浮/嵌左/嵌中/嵌右/嵌底） */
     private fun openPadTypePicker() {
         prefs.edit().putBoolean(longPressPrefKey(BTN_PAD_TYPE), true).apply()
-        val labels = arrayOf("全屏", "悬浮", "嵌左", "嵌中", "嵌右")
-        val values = arrayOf(PAD_FULL, PAD_FLOATING, PAD_EMBED_LEFT, PAD_EMBED_MID, PAD_EMBED_RIGHT)
+        val labels = arrayOf("全屏", "悬浮", "嵌左", "嵌中", "嵌右", "嵌底")
+        val values = arrayOf(PAD_FULL, PAD_FLOATING, PAD_EMBED_LEFT, PAD_EMBED_MID, PAD_EMBED_RIGHT, PAD_EMBED_BOTTOM)
         showBottomBar(labels.toList()) { i ->
             if (i < values.size && values[i] != padType) {
                 padType = values[i]
                 prefs.edit().putString(PREF_PAD_TYPE, padType).apply()
+                releaseAll()
+                computeLayout()
+                invalidate()
+            }
+            haptic()
+        }
+    }
+
+    /** 长按「布局」：底部白条选择键盘配列（65%/75%/60%，键数限定在不易误触又不鸡肋的范围） */
+    private fun openLayoutPicker() {
+        prefs.edit().putBoolean(longPressPrefKey(BTN_LAYOUT), true).apply()
+        val all = KbLayouts.all
+        val cur = layout.id
+        showBottomBar(all.map { it.label }) { i ->
+            if (i < all.size && all[i].id != cur) {
+                prefs.edit().putString(PREF_KB_LAYOUT, all[i].id).apply()
                 releaseAll()
                 computeLayout()
                 invalidate()
@@ -1869,10 +1925,10 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         return sb.toString()
     }
 
-    /** 键码 → 显示标签：优先 68 配列键帽，其次功能键/小键盘扩展 */
+    /** 键码 → 显示标签：优先当前配列键帽，其次功能键/小键盘扩展 */
     private fun comboKeyLabel(code: Int): String {
-        if (code == Hid.SPACE) return "Space"   // 68 配列空格键帽是空串，显示为 Space
-        for (row in Layout68.rows) {
+        if (code == Hid.SPACE) return "Space"   // 空格键帽是空串，显示为 Space
+        for (row in layout.rows) {
             for (k in row) if (k.code == code) return k.label
         }
         NUMPAD_EXTRA_KEYS.firstOrNull { it.second == code }?.let { return it.first }
@@ -2064,7 +2120,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     private fun resetCustomKeyWidths() {
         val edit = prefs.edit()
-        for ((row, keys) in Layout68.rows.withIndex()) {
+        for ((row, keys) in layout.rows.withIndex()) {
             for (column in keys.indices) edit.remove(widthPrefKey(row, column))
         }
         edit.apply()
@@ -2098,7 +2154,26 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         prefs.getFloat(prefKey, DEFAULT_KEY_WIDTH_SCALE).coerceIn(MIN_KEY_WIDTH_SCALE, MAX_KEY_WIDTH_SCALE)
     }
 
-    private fun widthPrefKey(row: Int, column: Int) = "$KEY_WIDTH_PREF_PREFIX${row}_$column"
+    // 键宽偏好按配列隔离：不同配列行数/列数不同，共用键名会互相污染
+    private fun widthPrefKey(row: Int, column: Int) = "$KEY_WIDTH_PREF_PREFIX${layout.id}_${row}_$column"
+
+    /** 旧版键宽键名无配列前缀（key_width_行_列），一次性迁移到默认 65% 配列名下 */
+    private fun migrateLegacyKeyWidths() {
+        if (prefs.getBoolean("kb_width_layout_ns", false)) return
+        val edit = prefs.edit()
+        val legacy = Regex("^\\d+_\\d+$")
+        for ((k, v) in prefs.all) {
+            if (k.startsWith(KEY_WIDTH_PREF_PREFIX) && v is Float) {
+                val rest = k.removePrefix(KEY_WIDTH_PREF_PREFIX)
+                if (legacy.matches(rest)) {
+                    edit.remove(k)
+                    edit.putFloat("$KEY_WIDTH_PREF_PREFIX${KbLayouts.DEFAULT_ID}_$rest", v)
+                }
+            }
+        }
+        edit.putBoolean("kb_width_layout_ns", true).apply()
+        keyWidthScales.clear()
+    }
 
     private fun keyName(key: Key): String =
         (if (key.isModifier) modLabel(key) else key.label).ifEmpty { "空格" }
@@ -2316,7 +2391,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         numpadResizePointer = INVALID_POINTER_ID
         closeSoftKeyboard()
         // 释放鼠标键列按住的状态（hub.releaseAll 会补发鼠标全键抬起）
-        heldMouseButton = 0
+        heldMouseKeyIndex = -1
         heldMousePointer = INVALID_POINTER_ID
         tp.externalButton = 0
         hideBottomBar()
@@ -2338,6 +2413,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        migrateLegacyKeyWidths()
         updateBattery()
         batteryHandler.postDelayed(batteryTask, BATTERY_REFRESH_MS)
         // 首次进入：长按功能引导教学（只弹一次）
@@ -2356,7 +2432,8 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
                 text = "带橙色小圆点的按钮支持长按：\n" +
                     "· 长按「中英」→ 选择单发 Shift 或 Ctrl+Space\n" +
                     "· 长按「输入法」→ 选择切输入法组合键\n" +
-                    "· 长按「触控板模式」→ 直接选 全屏/悬浮/嵌左/嵌中/嵌右\n\n" +
+                    "· 长按「触控板模式」→ 直接选 全屏/悬浮/嵌左/嵌中/嵌右/嵌底\n" +
+                    "· 长按「布局」→ 切换键盘配列（65% / 75% / 60%）\n\n" +
                     "普通按钮点按即用，长按有更多功能。"
                 textSize = 14f
                 setTextColor(Color.parseColor("#E6EAF0"))
@@ -2408,7 +2485,8 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         PAD_FLOATING -> "悬浮"
         PAD_EMBED_LEFT -> "嵌左"
         PAD_EMBED_MID -> "嵌中"
-        else -> "嵌右"
+        PAD_EMBED_RIGHT -> "嵌右"
+        else -> "嵌底"
     }
 
     private fun nextPadType(cur: String): String = when (cur) {
@@ -2416,6 +2494,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         PAD_FLOATING -> PAD_EMBED_LEFT
         PAD_EMBED_LEFT -> PAD_EMBED_MID
         PAD_EMBED_MID -> PAD_EMBED_RIGHT
+        PAD_EMBED_RIGHT -> PAD_EMBED_BOTTOM
         else -> PAD_FULL
     }
 
@@ -2444,7 +2523,6 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         private const val CHORD_DELAY_MS = 300L
         private const val DOUBLE_TAP_LOCK_MS = 280L
         private const val HIT_SLOP_DP = 3f   // 死区就近归属半径（间隙 4dp 时 3dp 恰好完全覆盖）
-        private const val ROW_WIDTH_UNITS = 16f
         private const val DEFAULT_KEY_WIDTH_SCALE = 1f
         private const val MIN_KEY_WIDTH_SCALE = 0.6f
         private const val MAX_KEY_WIDTH_SCALE = 2.5f
@@ -2467,6 +2545,9 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         private const val BTN_NUMPAD = 13
         private const val BTN_COMBO = 14
         private const val BTN_SOFT_KB = 15
+
+        // 键盘配列
+        private const val PREF_KB_LAYOUT = "kb_layout"
 
         // 数字小键盘
         private const val PREF_NUMPAD_ENABLED = "numpad_enabled"
@@ -2560,6 +2641,7 @@ class KeyboardView(context: Context, private val hub: InputHub) : View(context) 
         private const val PAD_EMBED_LEFT = "embedL"
         private const val PAD_EMBED_MID = "embedM"
         private const val PAD_EMBED_RIGHT = "embedR"
+        private const val PAD_EMBED_BOTTOM = "embedB"   // 触控板在右，板下方一行放鼠标左中右键（笔记本式）
 
         // 触控板尺寸
         private const val FULL_COL_W_DP = 56f   // 全屏触控板左侧鼠标键列宽
